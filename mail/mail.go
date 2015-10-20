@@ -17,6 +17,7 @@ func Send(packet *Packet, peer *Peer) {
 	}
 }
 
+// Returns the receiving port
 func Receive(protocol string, ret *Packet) {
 	if protocol == "UDP" {
 		udpReceive(ret)

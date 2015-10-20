@@ -12,10 +12,12 @@ func addrStr(ip string, port int) string {
 
 func main() {
 	localhost := "127.0.0.1"
-	port := 10001
+  // Bind to a UDP port
+  port := mail.UdpBind()
+  fmt.Println("Listening at port " + strconv.Itoa(port))
 
-	peer := mail.Peer{"UDP", addrStr(localhost, port)}
 	packet := mail.Packet{"Long live Go!"}
+	peer := mail.Peer{"UDP", addrStr(localhost, port)}
 
 	mail.Send(&packet, &peer)
 

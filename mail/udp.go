@@ -6,7 +6,11 @@ import (
 	"fmt"
 	"net"
 	"os"
+  "strings"
+  "strconv"
 )
+
+var serverConn *net.UDPConn
 
 func udpSend(packet *Packet, addr string) {
 	udpAddr, err := net.ResolveUDPAddr("udp", addr)
@@ -20,15 +24,31 @@ func udpSend(packet *Packet, addr string) {
 	checkError(err)
 }
 
-func udpReceive(ret *Packet) {
-	// Resolve local ip
-	serverAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1:10001")
-	checkError(err)
+// Must be called before using mail.receive for UDP
+func UdpBind() int {
+  var err error
+  var serverAddr *net.UDPAddr
 
-	// Now listen
-	serverConn, err := net.ListenUDP("udp", serverAddr)
+	// Resolve local ip
+	serverAddr, err = net.ResolveUDPAddr("udp", "127.0.0.1:0")
+  checkError(err)
+
+  // Now listen there, this also resolves the port
+	serverConn, err = net.ListenUDP("udp", serverAddr)
 	checkError(err)
-	defer serverConn.Close()
+  // For some reason, you can only get the chosen port by extracting from this string
+  // Apparently there is no parser either
+  port, err := strconv.Atoi(strings.Split(serverConn.LocalAddr().String(), ":")[1])
+  checkError(err)
+
+  return port
+}
+
+func UdpClose() {
+  serverConn.Close()
+}
+
+func udpReceive(ret *Packet) {
 
 	buf := make([]byte, 1024)
 
