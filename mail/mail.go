@@ -16,12 +16,19 @@ const (
 type Packet struct {
 	Content string
 	Type    int
-
-	Peer Peer
+	Sender  string
+	Peer    Peer
 }
 
-func (p Packet) String() string {
-	return p.Content + " " + p.Peer.Protocol + " " + p.Peer.Address
+func (peer Peer) String() string {
+	return peer.Protocol + " " + peer.Address
+}
+
+func (p Packet) String() (str string) {
+	str += "Sender ID:" + p.Sender + "\n"
+	str += "Type:" + string(p.Type) + "\n"
+	str += "Content:" + p.Content + "\n"
+	return str
 }
 
 // Send mails a packet
