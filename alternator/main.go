@@ -1,32 +1,32 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"net/rpc"
 	"os"
 )
 
-// func handlerLoop(ch chan *mail.Packet) {
-// 	for {
-// 		packet := <-ch
-// 		processPacket(packet)
-// 	}
-// }
-//
-// func receiveLoop(ch chan *mail.Packet) {
-// 	for {
-// 		var packet mail.Packet
-// 		mail.Receive("UDP", &packet)
-// 		ch <- &packet
-// 	}
-// }
-
 func main() {
-	if len(os.Args) > 1 {
-		addr := "127.0.0.1"
-		port := os.Args[1]
-		command := os.Args[2]
+	var port string
+	var addr string
+	var isCommand bool
+	var command string
+	var join bool
+	// var new bool
+
+	flag.StringVar(&port, "port", "0", "port that the node will use for communication.")
+	flag.StringVar(&addr, "target", "127.0.0.1", "target address for commands.")
+	flag.StringVar(&command, "command", "", "name of command.")
+	flag.BoolVar(&isCommand, "c", false, "use flag to run in command mode.")
+	flag.BoolVar(&join, "join", false, "joins the ring that the node at [address]:[port] belongs to.")
+	// flag.BoolVar(&new, "new", false, "creates a new ring")
+	flag.Parse()
+
+	// Use -c to issue a command
+	if isCommand {
+		command := os.Args[3]
 		// Control panel mode
 		switch command {
 		case "FindSuccessor":
@@ -42,33 +42,11 @@ func main() {
 		}
 
 	} else {
-		initNode()
+		if join {
+			initNode(addr + ":" + port)
+		} else {
+			initNode("")
+		}
 	}
-
-	// port := mail.UDPBind()
-	// id := getID(port)
-	//
-	// var packet mail.Packet
-	// if len(os.Args) > 1 {
-	// 	packet.Sender = id
-	// 	packet.Content = ""
-	// 	// Fill packet.Content
-	// 	for _, arg := range os.Args[2:] {
-	// 		packet.Content += arg + " "
-	// 	}
-	// 	peer := mail.Peer{Protocol: "UDP", Address: localhost + ":" + os.Args[1]}
-	// 	packet.Type = mail.Join
-	// 	mail.Send(&packet, &peer)
-	// } else {
-	// 	// Bind to a UDP port
-	// 	fmt.Println("Now listening at port " + strconv.Itoa(port))
-	// 	fmt.Println("Node ID is: " + id)
-	// 	fmt.Println()
-	//
-	// 	ch := make(chan *mail.Packet)
-	// 	go handlerLoop(ch)
-	// 	receiveLoop(ch)
-	// }
-
 	return
 }
