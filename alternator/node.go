@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/sha1"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -70,6 +71,9 @@ func (altNode *AlterNode) GetSuccessor(_ struct{}, ret *ExtNode) error {
 
 // GetPredecessor sets ret to the predecessor of an alternode
 func (altNode *AlterNode) GetPredecessor(_ struct{}, ret *ExtNode) error {
+	if altNode.Predecessor == nil {
+		return errors.New("Predecessor is nil")
+	}
 	extNodeCopy(altNode.Predecessor, ret)
 	return nil
 }
@@ -122,11 +126,13 @@ func (altNode *AlterNode) FindSuccessor(key string, ret *ExtNode) error {
 // stabilize fixes the successors periodically
 func (altNode *AlterNode) stabilize() {
 	var temp ExtNode
-	makeRemoteCall(altNode.Successor, "GetPredecessor", nil, &temp)
-	if temp.ID > altNode.ID && temp.ID < altNode.Successor.ID {
+	// temp := ExtNode{"", ""}
+	err := makeRemoteCall(altNode.Successor, "GetPredecessor", struct{}{}, &temp)
+	if (err != nil) && inRange(temp.ID, altNode.ID, altNode.Successor.ID) {
 		altNode.Successor = &temp
 	}
-	makeRemoteCall(altNode.Successor, "Notify", nil, nil)
+	selfExt := ExtNode{altNode.ID, altNode.Address}
+	makeRemoteCall(altNode.Successor, "Notify", selfExt, nil)
 }
 
 // AutoStabilize runs Stabilize() on timed intervals
@@ -141,6 +147,7 @@ func (altNode *AlterNode) autoStabilize() {
 func (altNode *AlterNode) Notify(candidate *ExtNode, _ *struct{}) error {
 	// Should update fingers accordingly?
 	if (altNode.Predecessor == nil) || (inRange(candidate.ID, altNode.Predecessor.ID, altNode.ID)) {
+		// fmt.Println("*** haha, notify!!, candidate is : " + candidate.String())
 		altNode.Predecessor = candidate
 	}
 	return nil
@@ -162,24 +169,34 @@ func (altNode *AlterNode) checkPredecessor() {
 	c := make(chan error, 1)
 	beat := ""
 	go func() {
-		c <- makeRemoteCall(altNode.Predecessor, "Heartbeat", nil, &beat)
+		c <- makeRemoteCall(altNode.Predecessor, "Heartbeat", struct{}{}, &beat)
 	}()
 
 	select {
 	case err := <-c:
 		// Something wrong
 		if (err != nil) || (beat != "OK") {
-			altNode.Predecessor = nil
 			// Kill connection
-			ClientMap[altNode.Predecessor.Address].Close()
-			delete(ClientMap, altNode.Predecessor.Address)
+			killRPC(altNode.Predecessor)
+
+			altNode.Predecessor = nil
 		}
 	// Call timed out
 	case <-time.After(heartbeatTimeout):
-		altNode.Predecessor = nil
 		// Kill connection
-		ClientMap[altNode.Predecessor.Address].Close()
-		delete(ClientMap, altNode.Predecessor.Address)
+		killRPC(altNode.Predecessor)
+
+		altNode.Predecessor = nil
+	}
+}
+
+func killRPC(node *ExtNode) {
+	if node == nil {
+		return
+	}
+	if client, exists := ClientMap[node.Address]; exists {
+		client.Close()
+		delete(ClientMap, node.Address)
 	}
 }
 
@@ -212,16 +229,21 @@ func (altNode *AlterNode) initFingers() {
 
 func makeRemoteCall(callee *ExtNode, call string, args interface{}, result interface{}) error {
 	// Check if there is already a connection
-	client, clientOpen := ClientMap[callee.Address]
+	fmt.Println(callee.String() + "called for " + call)
+	var client *rpc.Client
+	var clientOpen bool
+	var err error
+	client, clientOpen = ClientMap[callee.Address]
 	// Open if not
 	if !clientOpen {
-		client, err := rpc.DialHTTP("tcp", callee.Address)
+		fmt.Println("Opening connection!")
+		client, err = rpc.DialHTTP("tcp", callee.Address)
 		if err != nil {
 			log.Fatal("dialing:", err)
 		}
 		ClientMap[callee.Address] = client
 	}
-	err := client.Call("AlterNode."+call, args, result)
+	err = client.Call("AlterNode."+call, args, result)
 
 	return err
 }
@@ -238,6 +260,9 @@ func genID() string {
 
 // Init this node
 func initNode(address string) {
+	// Init connection map
+	ClientMap = make(map[string]*rpc.Client)
+
 	// Register node
 	node := new(AlterNode)
 	rpc.Register(node)
@@ -248,14 +273,16 @@ func initNode(address string) {
 	}
 	port := strings.Split(l.Addr().String(), ":")[3]
 
+	// Initialize fields
 	node.ID = genID()
 	node.Address = "127.0.0.1:" + port
 	node.initFingers()
 
+	// Join a ring if address is specified
 	if address != "" {
 		broker := ExtNode{"0", address}
 		node.Join(&broker, nil)
-	} else {
+	} else { // Else make a new ring
 		var s struct{}
 		node.CreateRing(s, &s)
 	}
