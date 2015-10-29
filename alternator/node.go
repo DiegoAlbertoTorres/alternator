@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/sha1"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -20,6 +19,9 @@ import (
 const stableTime = 1000
 const heartbeatTime = 1000
 const heartbeatTimeout = 400
+
+const maxKey = "z"
+const minKey = "0"
 
 // AlterNode is a node in Alternator
 type AlterNode struct {
@@ -40,12 +42,23 @@ type ExtNode struct {
 	Address string
 }
 
-// Checks if test is in the range (a, b)
-func inRange(test string, a string, b string) bool {
-	if (test > a) && (test < b) {
-		return true
+/* Utility functions */
+
+func checkError(err error, msg string) {
+	if err != nil {
+		log.Fatal(msg+": ", err)
 	}
-	return false
+}
+
+// Checks if test is in the range (from, to) (non-inclusive)
+func inRange(test string, from string, to string) bool {
+	if from < to {
+		return (test > from) && (test < to)
+	} else if from > to {
+		return ((test > from) && (test <= maxKey)) || ((test < to) && (test >= minKey))
+	} else {
+		return test != from
+	}
 }
 
 /* ExtNode methods */
@@ -61,7 +74,32 @@ func extNodeCopy(src *ExtNode, dst *ExtNode) {
 	dst.Address = src.Address
 }
 
+func (extNode *ExtNode) isNil() bool {
+	return ((extNode == nil) || (extNode.ID == "nil"))
+}
+
 /* AlterNode methods */
+func (altNode *AlterNode) setSuccessor(new *ExtNode) {
+	altNode.Successor = new
+	// if new != nil {
+	// 	fmt.Println("Changed successor to " + new.String())
+	// } else {
+	// 	fmt.Println("Changed successor to <nil>")
+	// }
+	fmt.Println(altNode.string())
+}
+
+func (altNode *AlterNode) setPredecessor(new *ExtNode) {
+	if new == nil {
+		altNode.Predecessor = nil
+		fmt.Println(altNode.string())
+		// fmt.Println("Changed predecessor to <nil>")
+		return
+	}
+	altNode.Predecessor = new
+	fmt.Println(altNode.string())
+	// fmt.Println("Changed predecessor to " + new.String())
+}
 
 // GetSuccessor sets ret to the successor of an alternode
 func (altNode *AlterNode) GetSuccessor(_ struct{}, ret *ExtNode) error {
@@ -72,15 +110,17 @@ func (altNode *AlterNode) GetSuccessor(_ struct{}, ret *ExtNode) error {
 // GetPredecessor sets ret to the predecessor of an alternode
 func (altNode *AlterNode) GetPredecessor(_ struct{}, ret *ExtNode) error {
 	if altNode.Predecessor == nil {
-		return errors.New("Predecessor is nil")
+		ret.ID = "nil"
+		// return errors.New("Predecessor is nil")
+	} else {
+		extNodeCopy(altNode.Predecessor, ret)
 	}
-	extNodeCopy(altNode.Predecessor, ret)
 	return nil
 }
 
 // Join joins a node into an existing ring
 func (altNode *AlterNode) Join(broker *ExtNode, _ *struct{}) error {
-	altNode.Predecessor = nil
+	altNode.setPredecessor(nil)
 	makeRemoteCall(broker, "FindSuccessor", altNode.ID, &altNode.Successor)
 
 	fmt.Println("Joined ring")
@@ -93,27 +133,27 @@ func (altNode AlterNode) string() (str string) {
 	if altNode.Successor != nil {
 		str += "Successor: " + altNode.Successor.ID + "\n"
 	} else {
-		str += "Successor: nil" + "\n"
+		str += "Successor: <nil>" + "\n"
 	}
 
 	if altNode.Predecessor != nil {
 		str += "Predecessor: " + altNode.Predecessor.ID + "\n"
 	} else {
-		str += "Predecessor: nil" + "\n"
+		str += "Predecessor: <nil>" + "\n"
 	}
 	return
 }
 
 // FindSuccessor finds the successor of a key in the ring
 func (altNode *AlterNode) FindSuccessor(key string, ret *ExtNode) error {
-	fmt.Println("Finding successor of: " + key)
+	// fmt.Println("Finding successor of: " + key)
 	// Find ID of successor
 	for i, node := range altNode.Fingers {
-		fmt.Println("Going over: " + node.ID)
+		// fmt.Println("Going over: " + node.ID)
 		if node.ID > key {
 			// Reply with external node
 			ret.ID = altNode.Fingers[i].ID
-			ret.Address = altNode.Fingers[i].ID
+			ret.Address = altNode.Fingers[i].Address
 			return nil
 		}
 	}
@@ -125,12 +165,19 @@ func (altNode *AlterNode) FindSuccessor(key string, ret *ExtNode) error {
 
 // stabilize fixes the successors periodically
 func (altNode *AlterNode) stabilize() {
+	// fmt.Println("Stabilizing")
+
 	var temp ExtNode
-	// temp := ExtNode{"", ""}
-	err := makeRemoteCall(altNode.Successor, "GetPredecessor", struct{}{}, &temp)
-	if (err != nil) && inRange(temp.ID, altNode.ID, altNode.Successor.ID) {
-		altNode.Successor = &temp
+	if err := makeRemoteCall(altNode.Successor, "GetPredecessor", struct{}{}, &temp); err != nil {
+		return
 	}
+
+	// fmt.Println("Got my successor to be " + temp.String())
+	if !temp.isNil() && inRange(temp.ID, altNode.ID, altNode.Successor.ID) {
+		fmt.Println("stabilize() updated successor")
+		altNode.setSuccessor(&temp)
+	}
+
 	selfExt := ExtNode{altNode.ID, altNode.Address}
 	makeRemoteCall(altNode.Successor, "Notify", selfExt, nil)
 }
@@ -147,27 +194,30 @@ func (altNode *AlterNode) autoStabilize() {
 func (altNode *AlterNode) Notify(candidate *ExtNode, _ *struct{}) error {
 	// Should update fingers accordingly?
 	if (altNode.Predecessor == nil) || (inRange(candidate.ID, altNode.Predecessor.ID, altNode.ID)) {
-		// fmt.Println("*** haha, notify!!, candidate is : " + candidate.String())
-		altNode.Predecessor = candidate
+		fmt.Println("Notify() changed predecessor")
+		// fmt.Println("New is: " + candidate.String())
+		altNode.setPredecessor(candidate)
 	}
 	return nil
 }
 
 // Heartbeat returns an 'OK' to the caller
 func (altNode *AlterNode) Heartbeat(_ struct{}, ret *string) error {
+	// fmt.Println("Heartbeat called!")
 	*ret = "OK"
 	return nil
 }
 
 // checkPredecessor checks if the predecessor has failed
 func (altNode *AlterNode) checkPredecessor() {
-	if altNode.Predecessor == nil {
+	if (altNode.Predecessor == nil) || (altNode.Predecessor.ID == altNode.ID) {
 		return
 	}
 
 	// Ping
 	c := make(chan error, 1)
 	beat := ""
+	// fmt.Println("Sending heartbeat to " + altNode.Predecessor.ID)
 	go func() {
 		c <- makeRemoteCall(altNode.Predecessor, "Heartbeat", struct{}{}, &beat)
 	}()
@@ -176,21 +226,26 @@ func (altNode *AlterNode) checkPredecessor() {
 	case err := <-c:
 		// Something wrong
 		if (err != nil) || (beat != "OK") {
+			fmt.Println("Heartbeat error, ceasing connection")
 			// Kill connection
-			killRPC(altNode.Predecessor)
+			closeRPC(altNode.Predecessor)
 
-			altNode.Predecessor = nil
+			altNode.setPredecessor(nil)
+			// } else {
+			// 	fmt.Printf("All good")
 		}
-	// Call timed out
-	case <-time.After(heartbeatTimeout):
+		// Call timed out
+	case <-time.After(heartbeatTimeout * time.Millisecond):
+		fmt.Println("Successor stopped responding, ceasing connection")
 		// Kill connection
-		killRPC(altNode.Predecessor)
+		closeRPC(altNode.Predecessor)
 
-		altNode.Predecessor = nil
+		altNode.setPredecessor(nil)
 	}
 }
 
-func killRPC(node *ExtNode) {
+func closeRPC(node *ExtNode) {
+	fmt.Println("Closing connection to " + node.Address)
 	if node == nil {
 		return
 	}
@@ -209,11 +264,11 @@ func (altNode *AlterNode) autoCheckPredecessor() {
 
 // CreateRing creates a ring with this node as its only member
 func (altNode *AlterNode) CreateRing(_ struct{}, _ *struct{}) error {
-	altNode.Predecessor = nil
+	altNode.setPredecessor(nil)
 	var successor ExtNode
 	successor.ID = altNode.ID
 	successor.Address = altNode.Address
-	altNode.Successor = &successor
+	altNode.setSuccessor(&successor)
 
 	fmt.Println("Created ring:")
 	fmt.Println(altNode.string())
@@ -228,19 +283,18 @@ func (altNode *AlterNode) initFingers() {
 }
 
 func makeRemoteCall(callee *ExtNode, call string, args interface{}, result interface{}) error {
+	// fmt.Println("calling " + call)
+	// fmt.Println("Calling " + call + "() at " + callee.ID)
 	// Check if there is already a connection
-	fmt.Println(callee.String() + "called for " + call)
 	var client *rpc.Client
 	var clientOpen bool
 	var err error
 	client, clientOpen = ClientMap[callee.Address]
 	// Open if not
 	if !clientOpen {
-		fmt.Println("Opening connection!")
+		fmt.Println("Opening connection to " + callee.Address)
 		client, err = rpc.DialHTTP("tcp", callee.Address)
-		if err != nil {
-			log.Fatal("dialing:", err)
-		}
+		checkError(err, "dialing")
 		ClientMap[callee.Address] = client
 	}
 	err = client.Call("AlterNode."+call, args, result)
@@ -268,9 +322,7 @@ func initNode(address string) {
 	rpc.Register(node)
 	rpc.HandleHTTP()
 	l, e := net.Listen("tcp", ":0")
-	if e != nil {
-		log.Fatal("listen error:", e)
-	}
+	checkError(e, "listen error")
 	port := strings.Split(l.Addr().String(), ":")[3]
 
 	// Initialize fields
