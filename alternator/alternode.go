@@ -29,17 +29,16 @@ type AlterNode struct {
 	Address     string
 	Successor   *ExtNode
 	Predecessor *ExtNode
-	// Fingers is a sorted list (by ID) for nodes
-	Fingers []*ExtNode
+	Fingers     Fingers
 }
 
 // ClientMap is a map of addresses to rpc clients
 var ClientMap map[string]*rpc.Client
 
-// ExtNode is an external, non-local node
-type ExtNode struct {
-	ID      string
-	Address string
+// GetFingers sets ret to this node's fingers
+func (altNode *AlterNode) GetFingers(_ struct{}, ret *[]ExtNode) error {
+	*ret = altNode.Fingers.Slice
+	return nil
 }
 
 /* Utility functions */
@@ -59,23 +58,6 @@ func inRange(test string, from string, to string) bool {
 	} else {
 		return test != from
 	}
-}
-
-/* ExtNode methods */
-
-func (extNode ExtNode) String() (str string) {
-	str += "ID:" + extNode.ID + "\n"
-	str += "Address:" + extNode.Address + "\n"
-	return
-}
-
-func extNodeCopy(src *ExtNode, dst *ExtNode) {
-	dst.ID = src.ID
-	dst.Address = src.Address
-}
-
-func (extNode *ExtNode) isNil() bool {
-	return ((extNode == nil) || (extNode.ID == "nil"))
 }
 
 /* AlterNode methods */
@@ -146,21 +128,9 @@ func (altNode AlterNode) string() (str string) {
 
 // FindSuccessor finds the successor of a key in the ring
 func (altNode *AlterNode) FindSuccessor(key string, ret *ExtNode) error {
-	// fmt.Println("Finding successor of: " + key)
-	// Find ID of successor
-	for i, node := range altNode.Fingers {
-		// fmt.Println("Going over: " + node.ID)
-		if node.ID > key {
-			// Reply with external node
-			ret.ID = altNode.Fingers[i].ID
-			ret.Address = altNode.Fingers[i].Address
-			return nil
-		}
-	}
-	// Nothing bigger in circle, successor is first node
-	ret.ID = altNode.Fingers[0].ID
-	ret.Address = altNode.Fingers[0].Address
-	return nil
+	succ, err := altNode.Fingers.FindSuccessor(key)
+	*ret = succ
+	return err
 }
 
 // stabilize fixes the successors periodically
@@ -278,8 +248,7 @@ func (altNode *AlterNode) CreateRing(_ struct{}, _ *struct{}) error {
 
 func (altNode *AlterNode) initFingers() {
 	selfExt := ExtNode{altNode.ID, altNode.Address}
-	altNode.Fingers = append(altNode.Fingers, &selfExt)
-	// fmt.Println("Fingers initialized: " + altNode.Fingers[0].String())
+	altNode.Fingers.AddIfMissing(selfExt)
 }
 
 func makeRemoteCall(callee *ExtNode, call string, args interface{}, result interface{}) error {
@@ -292,9 +261,12 @@ func makeRemoteCall(callee *ExtNode, call string, args interface{}, result inter
 	client, clientOpen = ClientMap[callee.Address]
 	// Open if not
 	if !clientOpen {
-		fmt.Println("Opening connection to " + callee.Address)
+		fmt.Println("Attempting connection to " + callee.Address)
 		client, err = rpc.DialHTTP("tcp", callee.Address)
-		checkError(err, "dialing")
+		if err != nil {
+			// Client must be down, ignore
+			return nil
+		}
 		ClientMap[callee.Address] = client
 	}
 	err = client.Call("AlterNode."+call, args, result)
@@ -312,8 +284,8 @@ func genID() string {
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
-// Init this node
-func initNode(address string) {
+// InitNode initializes and alternode
+func InitNode(port string, address string) {
 	// Init connection map
 	ClientMap = make(map[string]*rpc.Client)
 
@@ -321,9 +293,9 @@ func initNode(address string) {
 	node := new(AlterNode)
 	rpc.Register(node)
 	rpc.HandleHTTP()
-	l, e := net.Listen("tcp", ":0")
+	l, e := net.Listen("tcp", ":"+port)
 	checkError(e, "listen error")
-	port := strings.Split(l.Addr().String(), ":")[3]
+	port = strings.Split(l.Addr().String(), ":")[3]
 
 	// Initialize fields
 	node.ID = genID()
@@ -341,6 +313,7 @@ func initNode(address string) {
 
 	go node.autoCheckPredecessor()
 	go node.autoStabilize()
+	go node.autoUpdateFingers()
 	fmt.Println("Listening on port " + port)
 	http.Serve(l, nil)
 }
