@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/boltdb/bolt"
 )
 
 // All in milliseconds
@@ -27,9 +29,11 @@ const minKey = "0"
 type AlterNode struct {
 	ID          string
 	Address     string
+	Port        string
 	Successor   *ExtNode
 	Predecessor *ExtNode
 	Fingers     Fingers
+	DB          *bolt.DB
 }
 
 // ClientMap is a map of addresses to rpc clients
@@ -289,18 +293,21 @@ func InitNode(port string, address string) {
 	// Init connection map
 	ClientMap = make(map[string]*rpc.Client)
 
-	// Register node
+	// Register node as RPC server
 	node := new(AlterNode)
 	rpc.Register(node)
 	rpc.HandleHTTP()
 	l, e := net.Listen("tcp", ":"+port)
 	checkError(e, "listen error")
+	// Get port selected by server
 	port = strings.Split(l.Addr().String(), ":")[3]
 
-	// Initialize fields
+	// Initialize AlterNode fields
 	node.ID = genID()
 	node.Address = "127.0.0.1:" + port
+	node.Port = port
 	node.initFingers()
+	node.initDB()
 
 	// Join a ring if address is specified
 	if address != "" {
