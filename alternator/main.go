@@ -31,7 +31,7 @@ func main() {
 		switch command {
 		case "FindSuccessor":
 			id := genID()
-			fmt.Println("Finding successor of " + id)
+			fmt.Println("Finding successor of " + keyToString(id))
 			var reply ExtNode
 			err = client.Call("AlterNode."+command, id, &reply)
 			checkErr("RPC failed", err)
@@ -44,7 +44,7 @@ func main() {
 			// Prepare key and value
 			key := genKey(args[0])
 			val := []byte(args[1])
-			fmt.Println("Putting pair " + key + "," + args[1])
+			fmt.Println("Putting pair " + keyToString(key) + "," + args[1])
 			err = client.Call("AlterNode."+command, &PutArgs{key, val}, &struct{}{})
 			checkErr("RPC failed", err)
 			fmt.Println("Success!")
@@ -56,7 +56,7 @@ func main() {
 			// Prepare key and value
 			key := genKey(args[0])
 			var val []byte
-			fmt.Println("Getting " + key)
+			fmt.Println("Getting " + keyToString(key))
 			err = client.Call("AlterNode."+command, key, &val)
 			checkErr("RPC failed", err)
 			fmt.Println(string(val))
@@ -72,11 +72,11 @@ func main() {
 	return
 }
 
-func genKey(str string) string {
+func genKey(str string) []byte {
 	h := sha1.New()
 	rand.Seed(10)
 	io.WriteString(h, str+strconv.Itoa(rand.Int()))
-	return fmt.Sprintf("%x", h.Sum(nil))
+	return h.Sum(nil)
 }
 
 func printExit(msg string) {

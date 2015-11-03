@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha1"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -22,12 +25,12 @@ const stableTime = 1000
 const heartbeatTime = 1000
 const heartbeatTimeout = 400
 
-const maxKey = "z"
-const minKey = "0"
+var maxKey, _ = hex.DecodeString("ffffffffffffffffffffffffffffffffffffffff")
+var minKey, _ = hex.DecodeString("0000000000000000000000000000000000000000")
 
 // AlterNode is a node in Alternator
 type AlterNode struct {
-	ID          string
+	ID          []byte
 	Address     string
 	Port        string
 	Successor   *ExtNode
@@ -54,37 +57,34 @@ func checkError(err error, msg string) {
 }
 
 // Checks if test is in the range (from, to) (non-inclusive)
-func inRange(test string, from string, to string) bool {
-	if from < to {
-		return (test > from) && (test < to)
-	} else if from > to {
-		return ((test > from) && (test <= maxKey)) || ((test < to) && (test >= minKey))
+func inRange(test []byte, from []byte, to []byte) bool {
+	if bytes.Compare(from, to) < 0 {
+		return (bytes.Compare(test, from) > 0) && (bytes.Compare(test, to) < 0)
+	} else if bytes.Compare(from, to) > 0 {
+		return ((bytes.Compare(test, from) > 0) && (bytes.Compare(test, maxKey) <= 0)) ||
+			((bytes.Compare(test, to) < 0) && (bytes.Compare(test, minKey) >= 0))
 	} else {
-		return test != from
+		return (bytes.Compare(test, from) != 0)
 	}
 }
 
 /* AlterNode methods */
-func (altNode *AlterNode) setSuccessor(new *ExtNode) {
+func (altNode *AlterNode) setSuccessor(new *ExtNode, caller string) {
 	altNode.Successor = new
-	// if new != nil {
-	// 	fmt.Println("Changed successor to " + new.String())
-	// } else {
-	// 	fmt.Println("Changed successor to <nil>")
-	// }
-	fmt.Println(altNode.string())
+	fmt.Println(caller + " changed successor:")
+	fmt.Println(altNode)
 }
 
-func (altNode *AlterNode) setPredecessor(new *ExtNode) {
+func (altNode *AlterNode) setPredecessor(new *ExtNode, caller string) {
 	if new == nil {
 		altNode.Predecessor = nil
-		fmt.Println(altNode.string())
+		// fmt.Println(altNode.string())
 		// fmt.Println("Changed predecessor to <nil>")
 		return
 	}
 	altNode.Predecessor = new
-	fmt.Println(altNode.string())
-	// fmt.Println("Changed predecessor to " + new.String())
+	fmt.Println(caller + " changed predecessor:")
+	fmt.Println(altNode)
 }
 
 // GetSuccessor sets ret to the successor of an alternode
@@ -96,34 +96,32 @@ func (altNode *AlterNode) GetSuccessor(_ struct{}, ret *ExtNode) error {
 // GetPredecessor sets ret to the predecessor of an alternode
 func (altNode *AlterNode) GetPredecessor(_ struct{}, ret *ExtNode) error {
 	if altNode.Predecessor == nil {
-		ret.ID = "nil"
-		// return errors.New("Predecessor is nil")
-	} else {
-		extNodeCopy(altNode.Predecessor, ret)
+		return errors.New(ErrNilPredecessor)
 	}
+	extNodeCopy(altNode.Predecessor, ret)
 	return nil
 }
 
 // Join joins a node into an existing ring
 func (altNode *AlterNode) Join(broker *ExtNode, _ *struct{}) error {
-	altNode.setPredecessor(nil)
+	altNode.setPredecessor(nil, "Join()")
 	makeRemoteCall(broker, "FindSuccessor", altNode.ID, &altNode.Successor)
 
 	fmt.Println("Joined ring")
-	fmt.Println(altNode.string())
+	fmt.Println(altNode)
 	return nil
 }
 
-func (altNode AlterNode) string() (str string) {
-	str += "ID: " + altNode.ID + "\n"
+func (altNode AlterNode) String() (str string) {
+	str += "ID: " + keyToString(altNode.ID) + "\n"
 	if altNode.Successor != nil {
-		str += "Successor: " + altNode.Successor.ID + "\n"
+		str += "Successor: " + keyToString(altNode.Successor.ID) + "\n"
 	} else {
 		str += "Successor: <nil>" + "\n"
 	}
 
 	if altNode.Predecessor != nil {
-		str += "Predecessor: " + altNode.Predecessor.ID + "\n"
+		str += "Predecessor: " + keyToString(altNode.Predecessor.ID) + "\n"
 	} else {
 		str += "Predecessor: <nil>" + "\n"
 	}
@@ -131,7 +129,7 @@ func (altNode AlterNode) string() (str string) {
 }
 
 // FindSuccessor finds the successor of a key in the ring
-func (altNode *AlterNode) FindSuccessor(key string, ret *ExtNode) error {
+func (altNode *AlterNode) FindSuccessor(key []byte, ret *ExtNode) error {
 	succ, err := altNode.Fingers.FindSuccessor(key)
 	*ret = succ
 	return err
@@ -142,14 +140,14 @@ func (altNode *AlterNode) stabilize() {
 	// fmt.Println("Stabilizing")
 
 	var temp ExtNode
-	if err := makeRemoteCall(altNode.Successor, "GetPredecessor", struct{}{}, &temp); err != nil {
-		return
+	err := makeRemoteCall(altNode.Successor, "GetPredecessor", struct{}{}, &temp)
+	nilPredec := assertRemoteErr(err, ErrNilPredecessor)
+	if nilPredec {
+		log.Print("GetPredecessor error ", err)
 	}
 
-	// fmt.Println("Got my successor to be " + temp.String())
-	if !temp.isNil() && inRange(temp.ID, altNode.ID, altNode.Successor.ID) {
-		fmt.Println("stabilize() updated successor")
-		altNode.setSuccessor(&temp)
+	if !nilPredec && inRange(temp.ID, altNode.ID, altNode.Successor.ID) {
+		altNode.setSuccessor(&temp, "stabilize():")
 	}
 
 	selfExt := ExtNode{altNode.ID, altNode.Address}
@@ -168,9 +166,7 @@ func (altNode *AlterNode) autoStabilize() {
 func (altNode *AlterNode) Notify(candidate *ExtNode, _ *struct{}) error {
 	// Should update fingers accordingly?
 	if (altNode.Predecessor == nil) || (inRange(candidate.ID, altNode.Predecessor.ID, altNode.ID)) {
-		fmt.Println("Notify() changed predecessor")
-		// fmt.Println("New is: " + candidate.String())
-		altNode.setPredecessor(candidate)
+		altNode.setPredecessor(candidate, "Notify()")
 	}
 	return nil
 }
@@ -184,7 +180,7 @@ func (altNode *AlterNode) Heartbeat(_ struct{}, ret *string) error {
 
 // checkPredecessor checks if the predecessor has failed
 func (altNode *AlterNode) checkPredecessor() {
-	if (altNode.Predecessor == nil) || (altNode.Predecessor.ID == altNode.ID) {
+	if (altNode.Predecessor == nil) || (bytes.Compare(altNode.Predecessor.ID, altNode.ID) == 0) {
 		return
 	}
 
@@ -204,9 +200,7 @@ func (altNode *AlterNode) checkPredecessor() {
 			// Kill connection
 			closeRPC(altNode.Predecessor)
 
-			altNode.setPredecessor(nil)
-			// } else {
-			// 	fmt.Printf("All good")
+			altNode.setPredecessor(nil, "checkPredecessor()")
 		}
 		// Call timed out
 	case <-time.After(heartbeatTimeout * time.Millisecond):
@@ -214,7 +208,7 @@ func (altNode *AlterNode) checkPredecessor() {
 		// Kill connection
 		closeRPC(altNode.Predecessor)
 
-		altNode.setPredecessor(nil)
+		altNode.setPredecessor(nil, "checkPredecessor()")
 	}
 }
 
@@ -238,21 +232,21 @@ func (altNode *AlterNode) autoCheckPredecessor() {
 
 // CreateRing creates a ring with this node as its only member
 func (altNode *AlterNode) CreateRing(_ struct{}, _ *struct{}) error {
-	altNode.setPredecessor(nil)
+	altNode.setPredecessor(nil, "CreateRing()")
 	var successor ExtNode
 	successor.ID = altNode.ID
 	successor.Address = altNode.Address
-	altNode.setSuccessor(&successor)
-
-	fmt.Println("Created ring:")
-	fmt.Println(altNode.string())
+	altNode.setSuccessor(&successor, "CreateRing()")
 
 	return nil
 }
 
 func (altNode *AlterNode) initFingers() {
 	selfExt := ExtNode{altNode.ID, altNode.Address}
-	altNode.Fingers.AddIfMissing(selfExt)
+	if added := altNode.Fingers.AddIfMissing(selfExt); added {
+		// Transfer keys if I have any
+
+	}
 }
 
 func makeRemoteCall(callee *ExtNode, call string, args interface{}, result interface{}) error {
@@ -280,12 +274,22 @@ func makeRemoteCall(callee *ExtNode, call string, args interface{}, result inter
 
 // Very annoying, will be using strings as IDs instead of a byte slice, since slices
 // cannot be used as a key in a map. Still, IDs are simply sha1sums of the address.
-func genID() string {
+func genID() []byte {
 	hostname, _ := os.Hostname()
 	h := sha1.New()
 	rand.Seed(time.Now().UTC().UnixNano())
 	io.WriteString(h, hostname+strconv.Itoa(rand.Int()))
-	return fmt.Sprintf("%x", h.Sum(nil))
+	return h.Sum(nil)
+}
+
+func keyToXColor(key []byte) string {
+	// Use first three bytes as RGB code
+	code := 36*(key[0]*5) + 6*(key[1]*5) + (key[2] * 5) + 16
+	return fmt.Sprintf("\x1b[38;5;%dm", code)
+}
+
+func keyToString(key []byte) string {
+	return fmt.Sprintf(keyToXColor(key)+"%x\x1b[0m", key)
 }
 
 // InitNode initializes and alternode
@@ -311,7 +315,8 @@ func InitNode(port string, address string) {
 
 	// Join a ring if address is specified
 	if address != "" {
-		broker := ExtNode{"0", address}
+		// We do not know the ID of the node connecting to, use stand-in
+		broker := ExtNode{[]byte("a"), address}
 		node.Join(&broker, nil)
 	} else { // Else make a new ring
 		var s struct{}

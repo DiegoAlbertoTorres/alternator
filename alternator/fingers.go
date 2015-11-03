@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"time"
 )
@@ -21,11 +22,11 @@ func (fingers *Fingers) insert(i int, new ExtNode) {
 }
 
 // FindSuccessor finds the successor of a key in the ring
-func (fingers *Fingers) FindSuccessor(key string) (ExtNode, error) {
+func (fingers *Fingers) FindSuccessor(key []byte) (ExtNode, error) {
 	// Find ID of successor
 	for i, node := range fingers.Slice {
 		// fmt.Println("Going over: " + node.ID)
-		if node.ID > key {
+		if bytes.Compare(node.ID, key) > 0 {
 			// Reply with external node
 			return fingers.Slice[i], nil
 		}
@@ -34,24 +35,25 @@ func (fingers *Fingers) FindSuccessor(key string) (ExtNode, error) {
 	return fingers.Slice[0], nil
 }
 
-// AddIfMissing adds a finger if not already in fingers
-func (fingers *Fingers) AddIfMissing(ext ExtNode) {
+// AddIfMissing adds a node to the fingers if not already there, returns true if added
+func (fingers *Fingers) AddIfMissing(ext ExtNode) bool {
 	prevID := minKey
 	length := len(fingers.Slice)
 	// Iterate through fingers
 	for i := 0; i < length; i++ {
 		// Already in Fingers
-		if ext.ID == fingers.Slice[i].ID {
-			return
+		if bytes.Compare(ext.ID, fingers.Slice[i].ID) == 0 {
+			return false
 			// Correct spot to add
-		} else if (ext.ID > prevID) && (ext.ID < fingers.Slice[i].ID) {
+		} else if (bytes.Compare(ext.ID, prevID) > 0) && (bytes.Compare(ext.ID, fingers.Slice[i].ID) < 0) {
 			fingers.insert(i, ext)
-			return
+			return true
 		}
 		prevID = fingers.Slice[i].ID
 	}
 	// Append at end if not in fingers and not added by loop
 	fingers.Slice = append(fingers.Slice, ext)
+	return true
 }
 
 func (fingers Fingers) String() (str string) {
