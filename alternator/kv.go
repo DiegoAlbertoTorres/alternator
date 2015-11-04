@@ -68,6 +68,27 @@ func (altNode *AlterNode) DBPut(args *PutArgs, _ *struct{}) error {
 	return nil
 }
 
+// // Returns all keys that are now foreign to this node
+// func (altNode *AlterNode) dbGetForeign(ext *ExtNode) error {
+// 	// Get range that belongs to ext
+// 	prevID := minKey
+// 	// Should change Fingers to be a doubly linked list
+// 	for e := fingers.List.Front(); e != nil; e = e.Next() {
+// 		str += fmt.Sprintf("Finger %d:\n%v", i, getExt(e))
+// 		i++
+// 	}
+// 	db.View(func(tx *bolt.Tx) error {
+// 		b := tx.Bucket([]byte("MyBucket"))
+// 		c := b.Cursor()
+//
+// 		for k, v := c.First(); k != nil; k, v = c.Next() {
+// 			fmt.Printf("key=%s, value=%s\n", k, v)
+// 		}
+//
+// 		return nil
+// 	})
+// }
+
 // Get gets an entry from the DHT
 func (altNode *AlterNode) Get(key []byte, ret *[]byte) error {
 	var ext ExtNode

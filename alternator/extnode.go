@@ -7,8 +7,8 @@ type ExtNode struct {
 }
 
 func (extNode ExtNode) String() (str string) {
-	str += "ID:" + keyToString(extNode.ID) + "\n"
-	str += "Address:" + extNode.Address + "\n"
+	str += "ID: " + keyToString(extNode.ID) + "\n"
+	str += "Address: " + extNode.Address + "\n"
 	return
 }
 

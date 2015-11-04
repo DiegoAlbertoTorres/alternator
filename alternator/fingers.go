@@ -2,71 +2,91 @@ package main
 
 import (
 	"bytes"
+	"container/list"
 	"fmt"
 	"time"
 )
 
 // Fingers stores the fingers of a node
 type Fingers struct {
-	Slice []ExtNode
+	List  *list.List
+	Slice []*ExtNode
 }
 
 const fingerUpdateTime = 400
 
+func (altNode *AlterNode) initFingers() {
+	selfExt := ExtNode{altNode.ID, altNode.Address}
+	altNode.Fingers.List = list.New()
+	altNode.Fingers.AddIfMissing(&selfExt)
+}
+
+func getExt(e *list.Element) *ExtNode {
+	return e.Value.(*ExtNode)
+}
+
 // Inserts a finger
-func (fingers *Fingers) insert(i int, new ExtNode) {
+func (fingers *Fingers) sliceInsert(new *ExtNode, i int) {
 	// Grow the slice by one element.
-	fingers.Slice = append(fingers.Slice, ExtNode{})
+	fingers.Slice = append(fingers.Slice, &ExtNode{})
 	copy(fingers.Slice[i+1:], fingers.Slice[i:])
 	fingers.Slice[i] = new
 }
 
 // FindSuccessor finds the successor of a key in the ring
-func (fingers *Fingers) FindSuccessor(key []byte) (ExtNode, error) {
+func (fingers *Fingers) FindSuccessor(key []byte) (*ExtNode, error) {
 	// Find ID of successor
-	for i, node := range fingers.Slice {
-		// fmt.Println("Going over: " + node.ID)
-		if bytes.Compare(node.ID, key) > 0 {
-			// Reply with external node
-			return fingers.Slice[i], nil
+	for e := fingers.List.Front(); e != nil; e = e.Next() {
+		finger := getExt(e)
+		if bytes.Compare(finger.ID, key) > 0 {
+			return finger, nil
 		}
 	}
 	// Nothing bigger in circle, successor is first node
-	return fingers.Slice[0], nil
+	return getExt(fingers.List.Front()), nil
 }
 
 // AddIfMissing adds a node to the fingers if not already there, returns true if added
-func (fingers *Fingers) AddIfMissing(ext ExtNode) bool {
-	prevID := minKey
-	length := len(fingers.Slice)
+func (fingers *Fingers) AddIfMissing(ext *ExtNode) bool {
+	i := 0
 	// Iterate through fingers
-	for i := 0; i < length; i++ {
+	for e := fingers.List.Front(); e != nil; e = e.Next() {
+		current := getExt(e)
+		var prevID []byte
+		if prev := e.Prev(); prev != nil {
+			prevID = getExt(prev).ID
+		} else {
+			prevID = minKey
+		}
 		// Already in Fingers
-		if bytes.Compare(ext.ID, fingers.Slice[i].ID) == 0 {
+		if bytes.Compare(ext.ID, current.ID) == 0 {
 			return false
-			// Correct spot to add
-		} else if (bytes.Compare(ext.ID, prevID) > 0) && (bytes.Compare(ext.ID, fingers.Slice[i].ID) < 0) {
-			fingers.insert(i, ext)
+		} else if (bytes.Compare(ext.ID, prevID) > 0) && (bytes.Compare(ext.ID, current.ID) < 0) {
+			// Correct spot to add, add to list and slice
+			fingers.List.InsertBefore(ext, e)
+			fingers.sliceInsert(ext, i)
 			return true
 		}
-		prevID = fingers.Slice[i].ID
+		i++
 	}
 	// Append at end if not in fingers and not added by loop
-	fingers.Slice = append(fingers.Slice, ext)
+	fingers.List.PushBack(ext)
+	fingers.sliceInsert(ext, 0)
 	return true
 }
 
 func (fingers Fingers) String() (str string) {
-	for i, node := range fingers.Slice {
-		str += fmt.Sprintf("Finger %d:\n%s", i, node.String())
+	i := 0
+	for e := fingers.List.Front(); e != nil; e = e.Next() {
+		str += fmt.Sprintf("Finger %d:\n%s", i, getExt(e).String())
+		i++
 	}
 	return
 }
 
 // Compares finger table to neighbors, adds new
 func (altNode *AlterNode) updateFingers() {
-	// fmt.Println("My fingers are: " + altNode.Fingers.String())
-	var successorFingers []ExtNode
+	var successorFingers []*ExtNode
 	// Get successors fingers
 	makeRemoteCall(altNode.Successor, "GetFingers", struct{}{}, &successorFingers)
 

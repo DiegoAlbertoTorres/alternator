@@ -43,7 +43,7 @@ type AlterNode struct {
 var ClientMap map[string]*rpc.Client
 
 // GetFingers sets ret to this node's fingers
-func (altNode *AlterNode) GetFingers(_ struct{}, ret *[]ExtNode) error {
+func (altNode *AlterNode) GetFingers(_ struct{}, ret *[]*ExtNode) error {
 	*ret = altNode.Fingers.Slice
 	return nil
 }
@@ -72,7 +72,7 @@ func inRange(test []byte, from []byte, to []byte) bool {
 func (altNode *AlterNode) setSuccessor(new *ExtNode, caller string) {
 	altNode.Successor = new
 	fmt.Println(caller + " changed successor:")
-	fmt.Println(altNode)
+	fmt.Println(altNode.string())
 }
 
 func (altNode *AlterNode) setPredecessor(new *ExtNode, caller string) {
@@ -84,7 +84,7 @@ func (altNode *AlterNode) setPredecessor(new *ExtNode, caller string) {
 	}
 	altNode.Predecessor = new
 	fmt.Println(caller + " changed predecessor:")
-	fmt.Println(altNode)
+	fmt.Println(altNode.string())
 }
 
 // GetSuccessor sets ret to the successor of an alternode
@@ -108,11 +108,11 @@ func (altNode *AlterNode) Join(broker *ExtNode, _ *struct{}) error {
 	makeRemoteCall(broker, "FindSuccessor", altNode.ID, &altNode.Successor)
 
 	fmt.Println("Joined ring")
-	fmt.Println(altNode)
+	fmt.Println(altNode.string())
 	return nil
 }
 
-func (altNode AlterNode) String() (str string) {
+func (altNode AlterNode) string() (str string) {
 	str += "ID: " + keyToString(altNode.ID) + "\n"
 	if altNode.Successor != nil {
 		str += "Successor: " + keyToString(altNode.Successor.ID) + "\n"
@@ -131,7 +131,7 @@ func (altNode AlterNode) String() (str string) {
 // FindSuccessor finds the successor of a key in the ring
 func (altNode *AlterNode) FindSuccessor(key []byte, ret *ExtNode) error {
 	succ, err := altNode.Fingers.FindSuccessor(key)
-	*ret = succ
+	*ret = *succ
 	return err
 }
 
@@ -141,12 +141,13 @@ func (altNode *AlterNode) stabilize() {
 
 	var temp ExtNode
 	err := makeRemoteCall(altNode.Successor, "GetPredecessor", struct{}{}, &temp)
-	nilPredec := assertRemoteErr(err, ErrNilPredecessor)
-	if nilPredec {
+	if err != nil {
 		log.Print("GetPredecessor error ", err)
+		// return
 	}
 
-	if !nilPredec && inRange(temp.ID, altNode.ID, altNode.Successor.ID) {
+	if err == nil && inRange(temp.ID, altNode.ID, altNode.Successor.ID) {
+		fmt.Println("setting successor to", temp)
 		altNode.setSuccessor(&temp, "stabilize():")
 	}
 
@@ -241,14 +242,7 @@ func (altNode *AlterNode) CreateRing(_ struct{}, _ *struct{}) error {
 	return nil
 }
 
-func (altNode *AlterNode) initFingers() {
-	selfExt := ExtNode{altNode.ID, altNode.Address}
-	if added := altNode.Fingers.AddIfMissing(selfExt); added {
-		// Transfer keys in that domain
-
-	}
-}
-
+// makeRemoteCall calls a function at a remote node
 func makeRemoteCall(callee *ExtNode, call string, args interface{}, result interface{}) error {
 	// fmt.Println("calling " + call)
 	// fmt.Println("Calling " + call + "() at " + callee.ID)
@@ -263,6 +257,7 @@ func makeRemoteCall(callee *ExtNode, call string, args interface{}, result inter
 		client, err = rpc.DialHTTP("tcp", callee.Address)
 		if err != nil {
 			// Client must be down, ignore
+			log.Print("Client down? " + callee.Address)
 			return nil
 		}
 		ClientMap[callee.Address] = client

@@ -42,6 +42,9 @@ func checkErr(str string, err error) {
 
 // Creates terminal truecolor escape sequence for the given key
 func keyToXColor(key []byte) string {
+	if len(key) < 1 {
+		return ""
+	}
 	// Convert to [0-1] range
 	f := float64(key[0]) / float64(255)
 	/*convert to long rainbow RGB*/
