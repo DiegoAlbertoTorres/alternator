@@ -244,7 +244,7 @@ func (altNode *AlterNode) CreateRing(_ struct{}, _ *struct{}) error {
 func (altNode *AlterNode) initFingers() {
 	selfExt := ExtNode{altNode.ID, altNode.Address}
 	if added := altNode.Fingers.AddIfMissing(selfExt); added {
-		// Transfer keys if I have any
+		// Transfer keys in that domain
 
 	}
 }
@@ -280,16 +280,6 @@ func genID() []byte {
 	rand.Seed(time.Now().UTC().UnixNano())
 	io.WriteString(h, hostname+strconv.Itoa(rand.Int()))
 	return h.Sum(nil)
-}
-
-func keyToXColor(key []byte) string {
-	// Use first three bytes as RGB code
-	code := 36*(key[0]*5) + 6*(key[1]*5) + (key[2] * 5) + 16
-	return fmt.Sprintf("\x1b[38;5;%dm", code)
-}
-
-func keyToString(key []byte) string {
-	return fmt.Sprintf(keyToXColor(key)+"%x\x1b[0m", key)
 }
 
 // InitNode initializes and alternode

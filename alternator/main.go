@@ -1,15 +1,9 @@
 package main
 
 import (
-	"crypto/sha1"
 	"flag"
 	"fmt"
-	"io"
-	"log"
-	"math/rand"
 	"net/rpc"
-	"os"
-	"strconv"
 )
 
 func main() {
@@ -70,22 +64,4 @@ func main() {
 		}
 	}
 	return
-}
-
-func genKey(str string) []byte {
-	h := sha1.New()
-	rand.Seed(10)
-	io.WriteString(h, str+strconv.Itoa(rand.Int()))
-	return h.Sum(nil)
-}
-
-func printExit(msg string) {
-	fmt.Println(msg)
-	os.Exit(1)
-}
-
-func checkErr(str string, err error) {
-	if err != nil {
-		log.Fatal(str+" ", err)
-	}
 }

@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/boltdb/bolt"
 )
 
 const bucketName = "Alternator"
+
+var dotPath = os.Getenv("HOME") + "/.alternator/"
 
 // PutArgs is a struct to represent the arguments of a call to Put or DBPut
 type PutArgs struct {
@@ -17,11 +20,10 @@ type PutArgs struct {
 }
 
 func (altNode *AlterNode) initDB() {
-	var err error
-	altNode.DB, err = bolt.Open("alternator"+altNode.Port+".db", 0600, nil)
-	if err != nil {
-		log.Fatal(err)
-	} else {
+	err := os.MkdirAll(dotPath, 0777)
+	checkFatal(err)
+	altNode.DB, err = bolt.Open(dotPath+altNode.Port+".db", 0600, nil)
+	if !checkFatal(err) {
 		// Create a bucket for all entries
 		altNode.DB.Update(func(tx *bolt.Tx) error {
 			// Single bucket system
