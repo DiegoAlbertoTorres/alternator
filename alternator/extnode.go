@@ -2,7 +2,7 @@ package main
 
 // ExtNode is an external, non-local node
 type ExtNode struct {
-	ID      []byte
+	ID      Key
 	Address string
 }
 

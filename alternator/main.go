@@ -24,10 +24,10 @@ func main() {
 		checkErr("dialing:", err)
 		switch command {
 		case "FindSuccessor":
-			id := genID()
-			fmt.Println("Finding successor of " + keyToString(id))
+			key := randomKey()
+			fmt.Println("Finding successor of " + keyToString(key))
 			var reply ExtNode
-			err = client.Call("AlterNode."+command, id, &reply)
+			err = client.Call("Alernator."+command, key, &reply)
 			checkErr("RPC failed", err)
 			fmt.Println(reply.String())
 		case "Put":
@@ -36,10 +36,10 @@ func main() {
 				printExit("Usage: Put key value")
 			}
 			// Prepare key and value
-			key := genKey(args[0])
+			key := stringToKey(args[0])
 			val := []byte(args[1])
 			fmt.Println("Putting pair " + keyToString(key) + "," + args[1])
-			err = client.Call("AlterNode."+command, &PutArgs{key, val}, &struct{}{})
+			err = client.Call("Alernator."+command, &PutArgs{key, val}, &struct{}{})
 			checkErr("RPC failed", err)
 			fmt.Println("Success!")
 		case "Get":
@@ -48,10 +48,10 @@ func main() {
 				printExit("Usage: Get key")
 			}
 			// Prepare key and value
-			key := genKey(args[0])
+			key := stringToKey(args[0])
 			var val []byte
 			fmt.Println("Getting " + keyToString(key))
-			err = client.Call("AlterNode."+command, key, &val)
+			err = client.Call("Alernator."+command, key, &val)
 			checkErr("RPC failed", err)
 			fmt.Println(string(val))
 		}

@@ -2,7 +2,9 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"log"
+	"os"
 )
 
 const (
@@ -25,5 +27,34 @@ func assertRemoteErr(err error, typ string) bool {
 		// Log the incident
 		log.Print("Unexpected error ", err)
 		return false
+	}
+}
+
+// Returns true if no error
+func checkFatal(err error) bool {
+	if err != nil {
+		// Exits
+		log.Fatal(err)
+	}
+	// No fatal
+	return false
+}
+
+func checkLogErr(err error) bool {
+	if err != nil {
+		log.Print(err)
+		return true
+	}
+	return false
+}
+
+func printExit(msg string) {
+	fmt.Println(msg)
+	os.Exit(1)
+}
+
+func checkErr(str string, err error) {
+	if err != nil {
+		log.Fatal(str+" ", err)
 	}
 }

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"container/list"
 	"fmt"
 	"time"
@@ -11,18 +10,23 @@ import (
 type Fingers struct {
 	List  *list.List
 	Slice []*ExtNode
+	Map   map[Key]*ExtNode
 }
 
 const fingerUpdateTime = 400
 
-func (altNode *AlterNode) initFingers() {
+func (altNode *Alernator) initFingers() {
 	selfExt := ExtNode{altNode.ID, altNode.Address}
 	altNode.Fingers.List = list.New()
+	altNode.Fingers.Map = make(map[Key]*ExtNode)
 	altNode.Fingers.AddIfMissing(&selfExt)
 }
 
 func getExt(e *list.Element) *ExtNode {
-	return e.Value.(*ExtNode)
+	if e != nil {
+		return e.Value.(*ExtNode)
+	}
+	return nil
 }
 
 // Inserts a finger
@@ -34,11 +38,11 @@ func (fingers *Fingers) sliceInsert(new *ExtNode, i int) {
 }
 
 // FindSuccessor finds the successor of a key in the ring
-func (fingers *Fingers) FindSuccessor(key []byte) (*ExtNode, error) {
+func (fingers *Fingers) FindSuccessor(k Key) (*ExtNode, error) {
 	// Find ID of successor
 	for e := fingers.List.Front(); e != nil; e = e.Next() {
 		finger := getExt(e)
-		if bytes.Compare(finger.ID, key) > 0 {
+		if keyCompare(finger.ID, k) > 0 {
 			return finger, nil
 		}
 	}
@@ -47,32 +51,31 @@ func (fingers *Fingers) FindSuccessor(key []byte) (*ExtNode, error) {
 }
 
 // AddIfMissing adds a node to the fingers if not already there, returns true if added
-func (fingers *Fingers) AddIfMissing(ext *ExtNode) bool {
+func (fingers *Fingers) AddIfMissing(ext *ExtNode) *list.Element {
 	i := 0
 	// Iterate through fingers
 	for e := fingers.List.Front(); e != nil; e = e.Next() {
 		current := getExt(e)
-		var prevID []byte
+		var prevID Key
 		if prev := e.Prev(); prev != nil {
 			prevID = getExt(prev).ID
 		} else {
 			prevID = minKey
 		}
 		// Already in Fingers
-		if bytes.Compare(ext.ID, current.ID) == 0 {
-			return false
-		} else if (bytes.Compare(ext.ID, prevID) > 0) && (bytes.Compare(ext.ID, current.ID) < 0) {
-			// Correct spot to add, add to list and slice
-			fingers.List.InsertBefore(ext, e)
+		if keyCompare(ext.ID, current.ID) == 0 {
+			return nil
+		} else if (keyCompare(ext.ID, prevID) > 0) && (keyCompare(ext.ID, current.ID) < 0) {
+			// Correct spot to add, add to list, slice and map
 			fingers.sliceInsert(ext, i)
-			return true
+			fingers.Map[ext.ID] = ext
+			return fingers.List.InsertBefore(ext, e)
 		}
 		i++
 	}
 	// Append at end if not in fingers and not added by loop
-	fingers.List.PushBack(ext)
 	fingers.sliceInsert(ext, 0)
-	return true
+	return fingers.List.PushBack(ext)
 }
 
 func (fingers Fingers) String() (str string) {
@@ -85,17 +88,21 @@ func (fingers Fingers) String() (str string) {
 }
 
 // Compares finger table to neighbors, adds new
-func (altNode *AlterNode) updateFingers() {
+func (altNode *Alernator) updateFingers() {
 	var successorFingers []*ExtNode
 	// Get successors fingers
 	makeRemoteCall(altNode.Successor, "GetFingers", struct{}{}, &successorFingers)
 
 	for _, finger := range successorFingers {
-		altNode.Fingers.AddIfMissing(finger)
+		elem := altNode.Fingers.AddIfMissing(finger)
+		if elem != nil {
+			// Send this node the keys that belong to it
+			altNode.expelForeignKeys(elem)
+		}
 	}
 }
 
-func (altNode *AlterNode) autoUpdateFingers() {
+func (altNode *Alernator) autoUpdateFingers() {
 	for {
 		altNode.updateFingers()
 		time.Sleep(fingerUpdateTime * time.Millisecond)
