@@ -24,7 +24,7 @@ func makeRemoteCall(callee *ExtNode, call string, args interface{}, result inter
 		}
 		ClientMap[callee.Address] = client
 	}
-	err = client.Call("Alernator."+call, args, result)
+	err = client.Call("Alternator."+call, args, result)
 	if err != nil {
 		log.Print("RPC call failed, Client down? "+callee.Address, err)
 		closeRPC(callee)

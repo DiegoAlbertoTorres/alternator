@@ -15,6 +15,8 @@ const (
 var (
 	// ErrKeyNotFound occurs when a Get was made for an unexisting key
 	ErrKeyNotFound = errors.New("key not found")
+	// ErrDataLost occurs when metadata for a name was found, but not its data
+	ErrDataLost = errors.New("data lost")
 )
 
 func assertRemoteErr(err error, typ string) bool {
@@ -53,8 +55,10 @@ func printExit(msg string) {
 	os.Exit(1)
 }
 
-func checkErr(str string, err error) {
+func checkErr(str string, err error) bool {
 	if err != nil {
-		log.Fatal(str+" ", err)
+		log.Print(str+" ", err)
+		return true
 	}
+	return false
 }

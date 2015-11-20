@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"net/rpc"
@@ -27,19 +28,25 @@ func main() {
 			key := randomKey()
 			fmt.Println("Finding successor of " + keyToString(key))
 			var reply ExtNode
-			err = client.Call("Alernator."+command, key, &reply)
+			err = client.Call("Alternator."+command, key, &reply)
 			checkErr("RPC failed", err)
 			fmt.Println(reply.String())
 		case "Put":
 			args := flag.Args()
 			if len(args) < 2 {
-				printExit("Usage: Put key value")
+				printExit("Usage: Put key value dest1 dest2 dest3...")
 			}
 			// Prepare key and value
-			key := stringToKey(args[0])
+			name := args[0]
 			val := []byte(args[1])
-			fmt.Println("Putting pair " + keyToString(key) + "," + args[1])
-			err = client.Call("Alernator."+command, &PutArgs{key, val}, &struct{}{})
+			var dests []Key
+			for _, arg := range args[2:] {
+				dest, _ := hex.DecodeString(arg)
+				dests = append(dests, sliceToKey(dest))
+			}
+
+			fmt.Println("Putting pair " + name + "," + args[1])
+			err = client.Call("Alternator."+command, &PutArgs{name, val, dests}, &struct{}{})
 			checkErr("RPC failed", err)
 			fmt.Println("Success!")
 		case "Get":
@@ -48,10 +55,10 @@ func main() {
 				printExit("Usage: Get key")
 			}
 			// Prepare key and value
-			key := stringToKey(args[0])
+			name := args[0]
 			var val []byte
-			fmt.Println("Getting " + keyToString(key))
-			err = client.Call("Alernator."+command, key, &val)
+			fmt.Println("Getting " + name)
+			err = client.Call("Alternator."+command, name, &val)
 			checkErr("RPC failed", err)
 			fmt.Println(string(val))
 		}

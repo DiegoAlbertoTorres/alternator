@@ -15,7 +15,7 @@ type Fingers struct {
 
 const fingerUpdateTime = 400
 
-func (altNode *Alernator) initFingers() {
+func (altNode *Alternator) initFingers() {
 	selfExt := ExtNode{altNode.ID, altNode.Address}
 	altNode.Fingers.List = list.New()
 	altNode.Fingers.Map = make(map[Key]*ExtNode)
@@ -68,6 +68,7 @@ func (fingers *Fingers) AddIfMissing(ext *ExtNode) *list.Element {
 		} else if (keyCompare(ext.ID, prevID) > 0) && (keyCompare(ext.ID, current.ID) < 0) {
 			// Correct spot to add, add to list, slice and map
 			fingers.sliceInsert(ext, i)
+			// fmt.Println("*********Added " + keyToString(ext.ID) + "to map!")
 			fingers.Map[ext.ID] = ext
 			return fingers.List.InsertBefore(ext, e)
 		}
@@ -75,6 +76,7 @@ func (fingers *Fingers) AddIfMissing(ext *ExtNode) *list.Element {
 	}
 	// Append at end if not in fingers and not added by loop
 	fingers.sliceInsert(ext, 0)
+	fingers.Map[ext.ID] = ext
 	return fingers.List.PushBack(ext)
 }
 
@@ -88,21 +90,24 @@ func (fingers Fingers) String() (str string) {
 }
 
 // Compares finger table to neighbors, adds new
-func (altNode *Alernator) updateFingers() {
+func (altNode *Alternator) updateFingers() {
 	var successorFingers []*ExtNode
 	// Get successors fingers
-	makeRemoteCall(altNode.Successor, "GetFingers", struct{}{}, &successorFingers)
+	if altNode.Successor != nil {
+		makeRemoteCall(altNode.Successor, "GetFingers", struct{}{}, &successorFingers)
+	}
 
 	for _, finger := range successorFingers {
-		elem := altNode.Fingers.AddIfMissing(finger)
-		if elem != nil {
-			// Send this node the keys that belong to it
-			altNode.expelForeignKeys(elem)
-		}
+		altNode.Fingers.AddIfMissing(finger)
+		// elem := altNode.Fingers.AddIfMissing(finger)
+		// if elem != nil {
+		// 	// Send this node the keys that belong to it
+		// 	altNode.expelForeignKeys(elem)
+		// }
 	}
 }
 
-func (altNode *Alernator) autoUpdateFingers() {
+func (altNode *Alternator) autoUpdateFingers() {
 	for {
 		altNode.updateFingers()
 		time.Sleep(fingerUpdateTime * time.Millisecond)

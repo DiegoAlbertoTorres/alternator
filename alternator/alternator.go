@@ -1,7 +1,6 @@
 package main
 
 import (
-	"container/list"
 	"crypto/sha1"
 	"encoding/hex"
 	"errors"
@@ -30,8 +29,8 @@ var maxKey = sliceToKey(maxSlice)
 var minSlice, _ = hex.DecodeString("0000000000000000000000000000000000000000")
 var minKey = sliceToKey(minSlice)
 
-// Alernator is a node in Alternator
-type Alernator struct {
+// Alternator is a node in Alternator
+type Alternator struct {
 	ID          Key
 	Address     string
 	Port        string
@@ -44,40 +43,40 @@ type Alernator struct {
 // ClientMap is a map of addresses to rpc clients
 var ClientMap map[string]*rpc.Client
 
-/* Alernator methods */
+/* Alternator methods */
 
 // GetFingers sets ret to this node's fingers
-func (altNode *Alernator) GetFingers(_ struct{}, ret *[]*ExtNode) error {
+func (altNode *Alternator) GetFingers(_ struct{}, ret *[]*ExtNode) error {
 	*ret = altNode.Fingers.Slice
 	return nil
 }
 
-func (altNode *Alernator) expelForeignKeys(elem *list.Element) {
-	ext := getExt(elem)
-	var prevID Key
-	if prev := getExt(elem.Prev()); prev != nil {
-		prevID = prev.ID
-	} else {
-		prevID = minKey
-	}
-	keys, vals := altNode.dbGetRange(prevID, ext.ID)
-	for i := range keys {
-		err := makeRemoteCall(ext, "DBPut", PutArgs{keys[i], vals[i]}, &struct{}{})
-		checkLogErr(err)
-		if err == nil {
-			altNode.DBDelete(keys[i], &struct{}{})
-		}
-	}
-	altNode.dbDeleteRange(prevID, ext.ID)
-}
+// func (altNode *Alternator) expelForeignKeys(elem *list.Element) {
+// 	ext := getExt(elem)
+// 	var prevID Key
+// 	if prev := getExt(elem.Prev()); prev != nil {
+// 		prevID = prev.ID
+// 	} else {
+// 		prevID = minKey
+// 	}
+// 	keys, vals := altNode.dbGetRange(prevID, ext.ID)
+// 	for i := range keys {
+// 		err := makeRemoteCall(ext, "DBPut", PutArgs{keys[i], vals[i]}, &struct{}{})
+// 		checkLogErr(err)
+// 		if err == nil {
+// 			altNode.DBDelete(keys[i], &struct{}{})
+// 		}
+// 	}
+// 	altNode.dbDeleteRange(prevID, ext.ID)
+// }
 
-func (altNode *Alernator) setSuccessor(new *ExtNode, caller string) {
+func (altNode *Alternator) setSuccessor(new *ExtNode, caller string) {
 	altNode.Successor = new
 	fmt.Println(caller + " changed successor:")
 	fmt.Println(altNode.string())
 }
 
-func (altNode *Alernator) setPredecessor(new *ExtNode, caller string) {
+func (altNode *Alternator) setPredecessor(new *ExtNode, caller string) {
 	if new == nil {
 		altNode.Predecessor = nil
 		// fmt.Println(altNode.string())
@@ -90,13 +89,13 @@ func (altNode *Alernator) setPredecessor(new *ExtNode, caller string) {
 }
 
 // GetSuccessor sets ret to the successor of an alternode
-func (altNode *Alernator) GetSuccessor(_ struct{}, ret *ExtNode) error {
+func (altNode *Alternator) GetSuccessor(_ struct{}, ret *ExtNode) error {
 	extNodeCopy(altNode.Successor, ret)
 	return nil
 }
 
 // GetPredecessor sets ret to the predecessor of an alternode
-func (altNode *Alernator) GetPredecessor(_ struct{}, ret *ExtNode) error {
+func (altNode *Alternator) GetPredecessor(_ struct{}, ret *ExtNode) error {
 	if altNode.Predecessor == nil {
 		return errors.New(ErrNilPredecessor)
 	}
@@ -105,7 +104,7 @@ func (altNode *Alernator) GetPredecessor(_ struct{}, ret *ExtNode) error {
 }
 
 // Join joins a node into an existing ring
-func (altNode *Alernator) Join(broker *ExtNode, _ *struct{}) error {
+func (altNode *Alternator) Join(broker *ExtNode, _ *struct{}) error {
 	altNode.setPredecessor(nil, "Join()")
 	makeRemoteCall(broker, "FindSuccessor", altNode.ID, &altNode.Successor)
 
@@ -114,7 +113,7 @@ func (altNode *Alernator) Join(broker *ExtNode, _ *struct{}) error {
 	return nil
 }
 
-func (altNode Alernator) string() (str string) {
+func (altNode Alternator) string() (str string) {
 	str += "ID: " + keyToString(altNode.ID) + "\n"
 	if altNode.Successor != nil {
 		str += "Successor: " + keyToString(altNode.Successor.ID) + "\n"
@@ -131,14 +130,14 @@ func (altNode Alernator) string() (str string) {
 }
 
 // FindSuccessor finds the successor of a key in the ring
-func (altNode *Alernator) FindSuccessor(k Key, ret *ExtNode) error {
+func (altNode *Alternator) FindSuccessor(k Key, ret *ExtNode) error {
 	succ, err := altNode.Fingers.FindSuccessor(k)
 	*ret = *succ
 	return err
 }
 
 // stabilize fixes the successors periodically
-func (altNode *Alernator) stabilize() {
+func (altNode *Alternator) stabilize() {
 	// fmt.Println("Stabilizing")
 
 	var temp ExtNode
@@ -158,7 +157,7 @@ func (altNode *Alernator) stabilize() {
 }
 
 // Notify is called by another node when it thinks it might be our predecessor
-func (altNode *Alernator) Notify(candidate *ExtNode, _ *struct{}) error {
+func (altNode *Alternator) Notify(candidate *ExtNode, _ *struct{}) error {
 	// Should update fingers accordingly?
 	if (altNode.Predecessor == nil) || (inRange(candidate.ID, altNode.Predecessor.ID, altNode.ID)) {
 		altNode.setPredecessor(candidate, "Notify()")
@@ -167,14 +166,14 @@ func (altNode *Alernator) Notify(candidate *ExtNode, _ *struct{}) error {
 }
 
 // Heartbeat returns an 'OK' to the caller
-func (altNode *Alernator) Heartbeat(_ struct{}, ret *string) error {
+func (altNode *Alternator) Heartbeat(_ struct{}, ret *string) error {
 	// fmt.Println("Heartbeat called!")
 	*ret = "OK"
 	return nil
 }
 
 // checkPredecessor checks if the predecessor has failed
-func (altNode *Alernator) checkPredecessor() {
+func (altNode *Alternator) checkPredecessor() {
 	if (altNode.Predecessor == nil) || (keyCompare(altNode.Predecessor.ID, altNode.ID) == 0) {
 		return
 	}
@@ -207,7 +206,7 @@ func (altNode *Alernator) checkPredecessor() {
 }
 
 // CreateRing creates a ring with this node as its only member
-func (altNode *Alernator) CreateRing(_ struct{}, _ *struct{}) error {
+func (altNode *Alternator) CreateRing(_ struct{}, _ *struct{}) error {
 	altNode.setPredecessor(nil, "CreateRing()")
 	var successor ExtNode
 	successor.ID = altNode.ID
@@ -217,7 +216,7 @@ func (altNode *Alernator) CreateRing(_ struct{}, _ *struct{}) error {
 	return nil
 }
 
-func (altNode *Alernator) autoCheckPredecessor() {
+func (altNode *Alternator) autoCheckPredecessor() {
 	for {
 		altNode.checkPredecessor()
 		time.Sleep(heartbeatTime * time.Millisecond)
@@ -225,7 +224,7 @@ func (altNode *Alernator) autoCheckPredecessor() {
 }
 
 // AutoStabilize runs Stabilize() on timed intervals
-func (altNode *Alernator) autoStabilize() {
+func (altNode *Alternator) autoStabilize() {
 	for {
 		altNode.stabilize()
 		time.Sleep(stableTime * time.Millisecond)
@@ -238,7 +237,7 @@ func InitNode(port string, address string) {
 	ClientMap = make(map[string]*rpc.Client)
 
 	// Register node as RPC server
-	node := new(Alernator)
+	node := new(Alternator)
 	rpc.Register(node)
 	rpc.HandleHTTP()
 	l, err := net.Listen("tcp", ":"+port)
@@ -246,7 +245,7 @@ func InitNode(port string, address string) {
 	// Get port selected by server
 	port = strings.Split(l.Addr().String(), ":")[3]
 
-	// Initialize Alernator fields
+	// Initialize Alternator fields
 	node.Address = "127.0.0.1:" + port
 	node.Port = port
 	node.ID = genID(port)
