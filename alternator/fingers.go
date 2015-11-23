@@ -10,7 +10,7 @@ import (
 type Fingers struct {
 	List  *list.List
 	Slice []*ExtNode
-	Map   map[Key]*ExtNode
+	Map   map[Key]*list.Element
 }
 
 const fingerUpdateTime = 400
@@ -18,7 +18,7 @@ const fingerUpdateTime = 400
 func (altNode *Alternator) initFingers() {
 	selfExt := ExtNode{altNode.ID, altNode.Address}
 	altNode.Fingers.List = list.New()
-	altNode.Fingers.Map = make(map[Key]*ExtNode)
+	altNode.Fingers.Map = make(map[Key]*list.Element)
 	altNode.Fingers.AddIfMissing(&selfExt)
 }
 
@@ -38,16 +38,15 @@ func (fingers *Fingers) sliceInsert(new *ExtNode, i int) {
 }
 
 // FindSuccessor finds the successor of a key in the ring
-func (fingers *Fingers) FindSuccessor(k Key) (*ExtNode, error) {
+func (fingers *Fingers) FindSuccessor(k Key) (*list.Element, error) {
 	// Find ID of successor
 	for e := fingers.List.Front(); e != nil; e = e.Next() {
-		finger := getExt(e)
-		if keyCompare(finger.ID, k) > 0 {
-			return finger, nil
+		if keyCompare(getExt(e).ID, k) > 0 {
+			return e, nil
 		}
 	}
 	// Nothing bigger in circle, successor is first node
-	return getExt(fingers.List.Front()), nil
+	return (fingers.List.Front()), nil
 }
 
 // AddIfMissing adds a node to the fingers if not already there, returns true if added
@@ -69,15 +68,17 @@ func (fingers *Fingers) AddIfMissing(ext *ExtNode) *list.Element {
 			// Correct spot to add, add to list, slice and map
 			fingers.sliceInsert(ext, i)
 			// fmt.Println("*********Added " + keyToString(ext.ID) + "to map!")
-			fingers.Map[ext.ID] = ext
-			return fingers.List.InsertBefore(ext, e)
+			e := fingers.List.InsertBefore(ext, e)
+			fingers.Map[ext.ID] = e
+			return e
 		}
 		i++
 	}
 	// Append at end if not in fingers and not added by loop
 	fingers.sliceInsert(ext, 0)
-	fingers.Map[ext.ID] = ext
-	return fingers.List.PushBack(ext)
+	e := fingers.List.PushBack(ext)
+	fingers.Map[ext.ID] = e
+	return e
 }
 
 func (fingers Fingers) String() (str string) {

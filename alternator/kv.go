@@ -8,6 +8,9 @@ import (
 	"github.com/boltdb/bolt"
 )
 
+// N is the number of nodes in which metadata is replicated
+const N = 2
+
 var dataBucket = []byte("data")
 var metaDataBucket = []byte("metadata")
 
@@ -18,6 +21,7 @@ type PutArgs struct {
 	Name       string
 	V          []byte
 	Replicants []Key
+	Success    int
 }
 
 // BatchInsertArgs is a struct to represent the arguments of BatchInsert
@@ -57,100 +61,16 @@ func (altNode *Alternator) closeDB() {
 	altNode.DB.Close()
 }
 
-func (altNode *Alternator) deleteRange() {
-
-}
-
-// dbGetRange returns all keys and values in a given range
-// func (altNode *Alternator) dbGetRange(min, max Key) ([]Key, [][]byte) {
-// 	var keys []Key
-// 	var vals [][]byte
-//
-// 	err := altNode.DB.View(func(tx *bolt.Tx) error {
-// 		b := tx.Bucket(dataBucket)
-// 		c := b.Cursor()
-//
-// 		// Start seeking at mind
-// 		c.Seek(min[:])
-// 		// Stop at max
-// 		for kslice, v := c.First(); kslice != nil && bytes.Compare(kslice, max[:]) < 0; kslice, v = c.Next() {
-// 			// TODO: Set a proper capacity for keys and vals?
-// 			keys = append(keys, sliceToKey(kslice))
-// 			vals = append(vals, v)
-// 		}
-// 		return nil
-// 	})
-//
-// 	checkErr("Get foreign error error:", err)
-//
-// 	return keys, vals
-// }
-
-// dbDeleteRange deletes all keys in a given range
-// func (altNode *Alternator) dbDeleteRange(min, max Key) error {
-// 	err := altNode.DB.View(func(tx *bolt.Tx) error {
-// 		b := tx.Bucket([]byte(bucketName))
-// 		c := b.Cursor()
-//
-// 		// Start seeking at mind
-// 		c.Seek(min[:])
-// 		// Stop at max
-// 		for k, _ := c.First(); k != nil && bytes.Compare(k, max[:]) < 0; k, _ = c.Next() {
-// 			b.Delete(k)
-// 		}
-// 		return nil
-// 	})
-// 	return err
-// }
-
-// BatchInsert inserts a set of keys/vals into the database in a single batch transaction
-// func (altNode *Alternator) BatchInsert(args BatchInsertArgs, _ *struct{}) error {
-// 	err := altNode.DB.Batch(func(tx *bolt.Tx) error {
-// 		b := tx.Bucket([]byte(bucketName))
-// 		for i := range args.Keys {
-// 			// TODO: catch put error, do something?
-// 			err := b.Put(args.Keys[i][:], args.Vals[i])
-// 			log.Print(err)
-// 		}
-// 		return nil
-// 	})
-// 	return err
-// }
-
-// DBDelete deletes a key from the database
-// func (altNode *Alternator) DBDelete(k Key, _ *struct{}) error {
-// 	return altNode.DB.View(func(tx *bolt.Tx) error {
-// 		b := tx.Bucket([]byte(bucketName))
-// 		err := b.Delete(k[:])
-// 		return err
-// 	})
-// }
-
-// DBGet gets gets the value corresponding to key, sets ret to this value
-// func (altNode *Alternator) DBGet(k Key, ret *[]byte) error {
-// 	fmt.Println("About to get key")
-// 	return altNode.DB.View(func(tx *bolt.Tx) error {
-// 		b := tx.Bucket([]byte(bucketName))
-// 		result := b.Get(k[:])
-// 		if result == nil {
-// 			return ErrKeyNotFound
-// 		}
-// 		*ret = result
-// 		// fmt.Printf("The answer is: %s\n", v)
-// 		return nil
-// 	})
-// }
-
 // PutData puts the (hash(name), val) pair in DB
 func (altNode *Alternator) PutData(args *PutArgs, _ *struct{}) error {
 	fmt.Println("About to put pair " + args.Name + "," + string(args.V))
-	altNode.DB.Update(func(tx *bolt.Tx) error {
+	err := altNode.DB.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(dataBucket)
 		kslice := stringToKey(args.Name)
 		err := b.Put(kslice[:], args.V)
 		return err
 	})
-	return nil
+	return err
 }
 
 // PutMetaArgs represents the arguments of a call to PutMetadata
@@ -162,86 +82,138 @@ type PutMetaArgs struct {
 // PutMetadata puts the (key, val) pair in DB
 func (altNode *Alternator) PutMetadata(args *PutMetaArgs, _ *struct{}) error {
 	fmt.Println("About to put meta " + args.Name)
+
 	// Serialize replicants
 	md := serialize(args.MD)
-	altNode.DB.Update(func(tx *bolt.Tx) error {
+	err := altNode.DB.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(metaDataBucket)
 		kslice := stringToKey(args.Name)
 		err := b.Put(kslice[:], md)
 		return err
 	})
-	return nil
+	return err
 }
 
-// Get gets an entry from the DHT
-// func (altNode *Alternator) Get(k Key, ret *[]byte) error {
-// 	var ext ExtNode
-// 	var result []byte
-// 	altNode.FindSuccessor(k, &ext)
-// 	// Resolve in this node
-// 	if keyCompare(ext.ID, altNode.ID) == 0 {
-// 		return altNode.DBGet(k, ret)
-// 	}
-// 	// Redirect
-// 	fmt.Println("Redirecting get " + keyToString(k))
-// 	err := makeRemoteCall(&ext, "DBGet", k, &result)
-// 	*ret = result
-// 	return err
-// }
+// DropKeyMD Drops all metadata associated with a key
+func (altNode *Alternator) DropKeyMD(k *Key, _ *struct{}) error {
+	err := altNode.DB.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(metaDataBucket)
+		err := b.Delete(k[:])
+		return err
+	})
+	return err
+}
 
-// Put adds an entry to the kv store
-// func (altNode *Alternator) Put(args *PutArgs, _ *struct{}) error {
-// 	// Find successor
-// 	var ext ExtNode
-// 	altNode.FindSuccessor(args.K, &ext)
-// 	// This node is successor
-// 	if keyCompare(altNode.ID, ext.ID) == 0 {
-// 		altNode.DBPut(args, &struct{}{})
-// 	} else {
-// 		fmt.Println("Redirecting put pair " + keyToString(args.K) + "," + string(args.V))
-// 		// Put it in the right successor
-// 		return makeRemoteCall(&ext, "DBPut", args, &struct{}{})
-// 	}
-// 	return nil
-// }
+// DropKeyData drops all data associated with a key
+func (altNode *Alternator) DropKeyData(k *Key, _ *struct{}) error {
+	err := altNode.DB.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(dataBucket)
+		err := b.Delete(k[:])
+		return err
+	})
+	return err
+}
 
 // Metadata represents the metadata of a (key, value) pair
 type Metadata struct {
 	Replicants []Key
 }
 
-// Put puts a (key, value) pair in the system
+// Put a (key, value) pair in the system
 func (altNode *Alternator) Put(args *PutArgs, _ *struct{}) error {
-	// Hash name
 	k := stringToKey(args.Name)
 	var successor ExtNode
-	altNode.FindSuccessor(k, &successor)
-	// Put metadata in name's successor
-	putMDArgs := PutMetaArgs{args.Name, Metadata{args.Replicants}}
-	err := makeRemoteCall(&successor, "PutMetadata", putMDArgs, &struct{}{})
-	if checkErr("PutMetadata error", err) {
+	err := altNode.FindSuccessor(k, &successor)
+
+	// Pass the call to successor
+	if (err == nil) && (successor.ID != altNode.ID) {
+		err := makeRemoteCall(&successor, "Put", args, &struct{}{})
 		return err
 	}
+	// Else resolve in this node
+	putMDArgs := PutMetaArgs{args.Name, Metadata{args.Replicants}}
+	// Store metadata here
+	altNode.PutMetadata(&putMDArgs, &struct{}{})
+
+	// Store in chain
+	i := 0
+	success := 0
+	mdReplicants := make([]*ExtNode, 0, N)
+	for current := altNode.Fingers.Map[altNode.ID]; i < N-1; current = current.Next() {
+		if current == nil {
+			current = altNode.Fingers.List.Front()
+		}
+		err := makeRemoteCall(getExt(current), "PutMetadata", putMDArgs, &struct{}{})
+		if err != nil {
+			checkErr("metadata put fail", err)
+		} else {
+			success++
+			mdReplicants = append(mdReplicants, getExt(current))
+		}
+		i++
+	}
+
+	if !(success > ((N - 1) / 2)) {
+		// Cancel puts
+		altNode.undoPutMD(k, mdReplicants)
+		// Return error
+		return ErrPutMDFail
+	}
+
 	// Put data in replicants
-	for _, rep := range args.Replicants {
-		ext, ok := altNode.Fingers.Map[rep]
+	dataReplicants := make([]*ExtNode, 0, len(args.Replicants))
+	success = 0
+	for _, repID := range args.Replicants {
+		repLNode, ok := altNode.Fingers.Map[repID]
 		if !ok {
 			log.Print("Fingers map wrong error")
 			continue
 		}
-		err = makeRemoteCall(ext, "PutData", args, &struct{}{})
-		checkLogErr(err)
+		rep := getExt(repLNode)
+		err = makeRemoteCall(rep, "PutData", args, &struct{}{})
+		if err == nil {
+			dataReplicants = append(dataReplicants, rep)
+			success++
+		} else {
+			log.Print(err)
+		}
 	}
 
+	// Undo if put does not meet success criteria
+	fmt.Printf("success was: %d\n", success)
+	if ((args.Success == 0) && (success != len(args.Replicants))) || (success < args.Success) {
+		altNode.undoPutMD(k, mdReplicants)
+		altNode.undoPutData(k, dataReplicants)
+		return ErrPutFail
+	}
+	return nil
+}
+
+// undoPutData undoes all data puts for a key in a set of nodes
+func (altNode *Alternator) undoPutData(k Key, nodes []*ExtNode) error {
+	for _, node := range nodes {
+		makeRemoteCall(node, "DropKeyData", k, &struct{}{})
+	}
+	// Wrong
+	return nil
+}
+
+// undoPutMD undoes all metadata puts for a key in a set of nodes
+func (altNode *Alternator) undoPutMD(k Key, nodes []*ExtNode) error {
+	for _, node := range nodes {
+		makeRemoteCall(node, "DropKeyMD", k, &struct{}{})
+	}
+	// Wrong
 	return nil
 }
 
 // GetMetadata returns the metadata (serialized) of a specific variable
 func (altNode *Alternator) GetMetadata(k Key, md *[]byte) error {
-	fmt.Println("About to get metadata")
+	// fmt.Println("About to get metadata")
 	return altNode.DB.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket(metaDataBucket)
 		*md = b.Get(k[:])
+		fmt.Println("Getting metadata for " + keyToString(k))
 		if md == nil {
 			return ErrKeyNotFound
 		}
@@ -252,10 +224,11 @@ func (altNode *Alternator) GetMetadata(k Key, md *[]byte) error {
 
 // GetData returns the metadata (serialized) of a specific variable
 func (altNode *Alternator) GetData(k Key, data *[]byte) error {
-	fmt.Println("About to get data")
+	// fmt.Println("About to get data")
 	return altNode.DB.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket(dataBucket)
 		*data = b.Get(k[:])
+		fmt.Println("Getting data for " + keyToString(k))
 		if data == nil {
 			return ErrKeyNotFound
 		}
@@ -280,9 +253,11 @@ func (altNode *Alternator) Get(name string, ret *[]byte) error {
 	}
 	// Get data from some replicant
 	for _, repID := range md.Replicants {
-		rep := altNode.Fingers.Map[repID]
-		err := makeRemoteCall(rep, "GetData", k, ret)
+		rep := getExt(altNode.Fingers.Map[repID])
+		var result []byte
+		err := makeRemoteCall(rep, "GetData", k, &result)
 		if err == nil {
+			*ret = result
 			return nil
 		}
 	}

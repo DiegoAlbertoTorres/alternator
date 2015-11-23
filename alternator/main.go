@@ -40,13 +40,17 @@ func main() {
 			name := args[0]
 			val := []byte(args[1])
 			var dests []Key
+			if len(args[2:]) < 0 {
+				fmt.Println("Need to give at least one destination node")
+				return
+			}
 			for _, arg := range args[2:] {
 				dest, _ := hex.DecodeString(arg)
 				dests = append(dests, sliceToKey(dest))
 			}
 
 			fmt.Println("Putting pair " + name + "," + args[1])
-			err = client.Call("Alternator."+command, &PutArgs{name, val, dests}, &struct{}{})
+			err = client.Call("Alternator."+command, &PutArgs{name, val, dests, 0}, &struct{}{})
 			checkErr("RPC failed", err)
 			fmt.Println("Success!")
 		case "Get":

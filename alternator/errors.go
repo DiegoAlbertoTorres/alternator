@@ -15,8 +15,15 @@ const (
 var (
 	// ErrKeyNotFound occurs when a Get was made for an unexisting key
 	ErrKeyNotFound = errors.New("key not found")
+
 	// ErrDataLost occurs when metadata for a name was found, but not its data
 	ErrDataLost = errors.New("data lost")
+
+	// ErrPutMDFail occurs when a node fails to put the metadata in N/2 successors
+	ErrPutMDFail = errors.New("failed to put metadata in n/2 successors")
+
+	// ErrPutFail occurs when a node fails to put the data in required amount of nodes
+	ErrPutFail = errors.New("failed to replicate in required amount of nodes")
 )
 
 func assertRemoteErr(err error, typ string) bool {

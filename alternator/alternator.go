@@ -106,7 +106,11 @@ func (altNode *Alternator) GetPredecessor(_ struct{}, ret *ExtNode) error {
 // Join joins a node into an existing ring
 func (altNode *Alternator) Join(broker *ExtNode, _ *struct{}) error {
 	altNode.setPredecessor(nil, "Join()")
-	makeRemoteCall(broker, "FindSuccessor", altNode.ID, &altNode.Successor)
+	err := makeRemoteCall(broker, "FindSuccessor", altNode.ID, &altNode.Successor)
+	if err != nil {
+		log.Fatal("Join failed: ", err)
+
+	}
 
 	fmt.Println("Joined ring")
 	fmt.Println(altNode.string())
@@ -132,7 +136,7 @@ func (altNode Alternator) string() (str string) {
 // FindSuccessor finds the successor of a key in the ring
 func (altNode *Alternator) FindSuccessor(k Key, ret *ExtNode) error {
 	succ, err := altNode.Fingers.FindSuccessor(k)
-	*ret = *succ
+	*ret = *getExt(succ)
 	return err
 }
 
@@ -147,7 +151,6 @@ func (altNode *Alternator) stabilize() {
 	}
 
 	if err == nil && inRange(temp.ID, altNode.ID, altNode.Successor.ID) {
-		fmt.Println("setting successor to", temp)
 		altNode.setSuccessor(&temp, "stabilize():")
 	}
 
@@ -201,7 +204,7 @@ func (altNode *Alternator) checkPredecessor() {
 		// Kill connection
 		closeRPC(altNode.Predecessor)
 
-		altNode.setPredecessor(nil, "checkPredecessor()")
+		// altNode.setPredecessor(nil, "checkPredecessor()")
 	}
 }
 
@@ -211,6 +214,7 @@ func (altNode *Alternator) CreateRing(_ struct{}, _ *struct{}) error {
 	var successor ExtNode
 	successor.ID = altNode.ID
 	successor.Address = altNode.Address
+
 	altNode.setSuccessor(&successor, "CreateRing()")
 
 	return nil
