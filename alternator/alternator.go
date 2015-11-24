@@ -146,9 +146,7 @@ func (altNode *Alternator) stabilize() {
 
 	var temp ExtNode
 	err := makeRemoteCall(altNode.Successor, "GetPredecessor", struct{}{}, &temp)
-	if err != nil {
-		log.Print("GetPredecessor error ", err)
-	}
+	// checkErr("GetPredecessor error", err)
 
 	if err == nil && inRange(temp.ID, altNode.ID, altNode.Successor.ID) {
 		altNode.setSuccessor(&temp, "stabilize():")
@@ -192,7 +190,6 @@ func (altNode *Alternator) checkPredecessor() {
 	case err := <-c:
 		// Something wrong
 		if (err != nil) || (beat != "OK") {
-			fmt.Println("Heartbeat error, ceasing connection")
 			// Kill connection
 			closeRPC(altNode.Predecessor)
 

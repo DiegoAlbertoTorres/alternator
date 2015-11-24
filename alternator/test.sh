@@ -33,3 +33,9 @@ alternator --port=38650 --command=Put e 5 b2f4defc5f806d98141a823d9c37223c90ab3d
 alternator --port=38650 --command=Put f 6 d0522c345c2a56d723554dab53230f04b983af9d fe9ef6131b9a934a55560a8054dd0c8adb05cba4
 
 # Get keys
+alternator --port=33846 --command=Get a
+alternator --port=33846 --command=Get b
+alternator --port=33846 --command=Get c
+alternator --port=33846 --command=Get d
+alternator --port=33846 --command=Get e
+alternator --port=33846 --command=Get f

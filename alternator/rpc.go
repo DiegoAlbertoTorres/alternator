@@ -15,18 +15,17 @@ func makeRemoteCall(callee *ExtNode, call string, args interface{}, result inter
 	client, clientOpen = ClientMap[callee.Address]
 	// Open if not
 	if !clientOpen {
-		fmt.Println("Attempting connection to " + callee.Address)
 		client, err = rpc.DialHTTP("tcp", callee.Address)
 		if err != nil {
 			// Client must be down, ignore
-			log.Print("RPC dial failed, client "+callee.Address+" down? ", err)
+			// log.Print("RPC dial failed, client "+callee.Address+" down? ", err)
 			return err
 		}
 		ClientMap[callee.Address] = client
 	}
 	err = client.Call("Alternator."+call, args, result)
 	if err != nil {
-		log.Print("RPC call failed, client "+callee.Address+" down?", err)
+		log.Print("RPC call failed, client "+callee.Address+" down? ", err)
 		closeRPC(callee)
 	}
 

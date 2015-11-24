@@ -63,13 +63,15 @@ func (altNode *Alternator) closeDB() {
 
 // PutData puts the (hash(name), val) pair in DB
 func (altNode *Alternator) PutData(args *PutArgs, _ *struct{}) error {
-	fmt.Println("About to put pair " + args.Name + "," + string(args.V))
+	k := stringToKey(args.Name)
 	err := altNode.DB.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(dataBucket)
-		kslice := stringToKey(args.Name)
-		err := b.Put(kslice[:], args.V)
+		err := b.Put(k[:], args.V)
 		return err
 	})
+	if err == nil {
+		log.Print("Stored pair " + args.Name + "," + string(args.V) + " key is " + keyToString(k))
+	}
 	return err
 }
 
@@ -81,16 +83,17 @@ type PutMetaArgs struct {
 
 // PutMetadata puts the (key, val) pair in DB
 func (altNode *Alternator) PutMetadata(args *PutMetaArgs, _ *struct{}) error {
-	fmt.Println("About to put meta " + args.Name)
-
+	k := stringToKey(args.Name)
 	// Serialize replicants
 	md := serialize(args.MD)
 	err := altNode.DB.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(metaDataBucket)
-		kslice := stringToKey(args.Name)
-		err := b.Put(kslice[:], md)
+		err := b.Put(k[:], md)
 		return err
 	})
+	if err == nil {
+		log.Print("Stored metadata for " + args.Name + ", key is " + keyToString(k))
+	}
 	return err
 }
 
@@ -132,14 +135,14 @@ func (altNode *Alternator) Put(args *PutArgs, _ *struct{}) error {
 	}
 	// Else resolve in this node
 	putMDArgs := PutMetaArgs{args.Name, Metadata{args.Replicants}}
-	// Store metadata here
-	altNode.PutMetadata(&putMDArgs, &struct{}{})
+	// // Store metadata here
+	// altNode.PutMetadata(&putMDArgs, &struct{}{})
 
 	// Store in chain
 	i := 0
 	success := 0
 	mdReplicants := make([]*ExtNode, 0, N)
-	for current := altNode.Fingers.Map[altNode.ID]; i < N-1; current = current.Next() {
+	for current := altNode.Fingers.Map[altNode.ID]; i < N; current = current.Next() {
 		if current == nil {
 			current = altNode.Fingers.List.Front()
 		}
@@ -180,7 +183,6 @@ func (altNode *Alternator) Put(args *PutArgs, _ *struct{}) error {
 	}
 
 	// Undo if put does not meet success criteria
-	fmt.Printf("success was: %d\n", success)
 	if ((args.Success == 0) && (success != len(args.Replicants))) || (success < args.Success) {
 		altNode.undoPutMD(k, mdReplicants)
 		altNode.undoPutData(k, dataReplicants)
