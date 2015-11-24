@@ -242,17 +242,25 @@ func (altNode *Alternator) GetData(k Key, data *[]byte) error {
 // Get gets from the system the value corresponding to the key
 func (altNode *Alternator) Get(name string, ret *[]byte) error {
 	k := stringToKey(name)
-	var successor ExtNode
 	var rawMD []byte
 
+	// Get replicants from metadata chain
+	var successor ExtNode
 	altNode.FindSuccessor(k, &successor)
-	// Get replicants from coordinator
-	err := makeRemoteCall(&successor, "GetMetadata", k, &rawMD)
+	i := 0
+	for current := altNode.Fingers.Map[successor.ID]; i < N; current = current.Next() {
+		if current == nil {
+			current = altNode.Fingers.List.Front()
+		}
+		fmt.Printf("asking %s\n", keyToString(getExt(current).ID))
+		i++
+		err := makeRemoteCall(getExt(current), "GetMetadata", k, &rawMD)
+		if err == nil {
+			break
+		}
+	}
 	md := bytesToMetadata(rawMD)
 
-	if checkLogErr(err) {
-		return err
-	}
 	// Get data from some replicant
 	for _, repID := range md.Replicants {
 		rep := getExt(altNode.Fingers.Map[repID])
