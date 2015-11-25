@@ -7,8 +7,8 @@ type ExtNode struct {
 }
 
 func (extNode ExtNode) String() (str string) {
-	str += "ID: " + keyToString(extNode.ID) + "\n"
-	str += "Address: " + extNode.Address + "\n"
+	str += "ID: " + keyToString(extNode.ID)
+	// str += "Address: " + extNode.Address + "\n"
 	return
 }
 
@@ -18,4 +18,11 @@ func extNodeCopy(src *ExtNode, dst *ExtNode) {
 	// fmt.Printf("copied %d\n", copy(dst.ID, src.ID))
 	dst.ID = src.ID
 	dst.Address = src.Address
+}
+
+func extCompare(a *ExtNode, b *ExtNode) bool {
+	if (a.ID == b.ID) && (a.Address == b.Address) {
+		return true
+	}
+	return false
 }

@@ -24,6 +24,9 @@ var (
 
 	// ErrPutFail occurs when a node fails to put the data in required amount of nodes
 	ErrPutFail = errors.New("failed to replicate in required amount of nodes")
+
+	// ErrJoinFail occurs when a join request fails
+	ErrJoinFail = errors.New("join request failed")
 )
 
 func assertRemoteErr(err error, typ string) bool {

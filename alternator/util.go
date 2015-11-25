@@ -7,6 +7,13 @@ import (
 
 const initSeed = 500
 
+func intMax(a, b int) int {
+	if a >= b {
+		return a
+	}
+	return b
+}
+
 func bytesToMetadata(data []byte) (md Metadata) {
 	buf := bytes.NewBuffer(data)
 	dec := gob.NewDecoder(buf)

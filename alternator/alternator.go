@@ -37,6 +37,7 @@ type Alternator struct {
 	Successor   *ExtNode
 	Predecessor *ExtNode
 	Fingers     Fingers
+	MemberHist  MemberHist
 	DB          *bolt.DB
 }
 
@@ -46,10 +47,10 @@ var ClientMap map[string]*rpc.Client
 /* Alternator methods */
 
 // GetFingers sets ret to this node's fingers
-func (altNode *Alternator) GetFingers(_ struct{}, ret *[]*ExtNode) error {
-	*ret = altNode.Fingers.Slice
-	return nil
-}
+// func (altNode *Alternator) GetFingers(_ struct{}, ret *[]*ExtNode) error {
+// 	*ret = altNode.Fingers.Slice
+// 	return nil
+// }
 
 // func (altNode *Alternator) expelForeignKeys(elem *list.Element) {
 // 	ext := getExt(elem)
@@ -103,14 +104,32 @@ func (altNode *Alternator) GetPredecessor(_ struct{}, ret *ExtNode) error {
 	return nil
 }
 
+// JoinRequest handles a request by another node to join the ring
+func (altNode *Alternator) JoinRequest(other *ExtNode, _ *struct{}) error {
+	// Add join to history
+	newEntry := histEntry{time.Now(), histJoin, other}
+	altNode.insertToHistory(newEntry)
+	altNode.Fingers.Insert(other)
+	return nil
+}
+
 // Join joins a node into an existing ring
-func (altNode *Alternator) Join(broker *ExtNode, _ *struct{}) error {
+func (altNode *Alternator) joinRing(broker *ExtNode) error {
+	// Start process
+	err := makeRemoteCall(broker, "JoinRequest", altNode.selfExt(), &struct{}{})
+	if err != nil {
+		return ErrJoinFail
+	}
+
 	altNode.setPredecessor(nil, "Join()")
-	err := makeRemoteCall(broker, "FindSuccessor", altNode.ID, &altNode.Successor)
+	err = makeRemoteCall(broker, "FindSuccessor", altNode.ID, &altNode.Successor)
 	if err != nil {
 		log.Fatal("Join failed: ", err)
-
 	}
+	// Add own join to history
+	self := altNode.selfExt()
+	altNode.insertToHistory(histEntry{time.Now(), histJoin, self})
+	altNode.Fingers.Insert(self)
 
 	fmt.Println("Joined ring")
 	fmt.Println(altNode.string())
@@ -140,6 +159,11 @@ func (altNode *Alternator) FindSuccessor(k Key, ret *ExtNode) error {
 	return err
 }
 
+// selfExt returns an extNode equivalent of altNode
+func (altNode *Alternator) selfExt() *ExtNode {
+	return &ExtNode{altNode.ID, altNode.Address}
+}
+
 // stabilize fixes the successors periodically
 func (altNode *Alternator) stabilize() {
 	// fmt.Println("Stabilizing")
@@ -152,9 +176,9 @@ func (altNode *Alternator) stabilize() {
 		altNode.setSuccessor(&temp, "stabilize():")
 	}
 
-	selfExt := ExtNode{altNode.ID, altNode.Address}
+	self := altNode.selfExt()
 	// fmt.Println("Notifying", altNode.Successor)
-	makeRemoteCall(altNode.Successor, "Notify", selfExt, nil)
+	makeRemoteCall(altNode.Successor, "Notify", self, nil)
 }
 
 // Notify is called by another node when it thinks it might be our predecessor
@@ -205,16 +229,18 @@ func (altNode *Alternator) checkPredecessor() {
 	}
 }
 
-// CreateRing creates a ring with this node as its only member
-func (altNode *Alternator) CreateRing(_ struct{}, _ *struct{}) error {
-	altNode.setPredecessor(nil, "CreateRing()")
+// createRing creates a ring with this node as its only member
+func (altNode *Alternator) createRing() {
+	altNode.setPredecessor(nil, "createRing()")
 	var successor ExtNode
 	successor.ID = altNode.ID
 	successor.Address = altNode.Address
+	// Add own join to ring
+	self := altNode.selfExt()
+	altNode.insertToHistory(histEntry{time.Now(), histJoin, self})
+	altNode.Fingers.Insert(self)
 
-	altNode.setSuccessor(&successor, "CreateRing()")
-
-	return nil
+	altNode.setSuccessor(&successor, "createRing()")
 }
 
 func (altNode *Alternator) autoCheckPredecessor() {
@@ -250,7 +276,7 @@ func InitNode(port string, address string) {
 	node.Address = "127.0.0.1:" + port
 	node.Port = port
 	node.ID = genID(port)
-	node.initFingers()
+	node.Fingers.init()
 	node.initDB()
 
 	// Join a ring if address is specified
@@ -258,10 +284,9 @@ func InitNode(port string, address string) {
 		// We do not know the ID of the node connecting to, use stand-in
 		var k Key
 		broker := ExtNode{k, address}
-		node.Join(&broker, nil)
+		node.joinRing(&broker)
 	} else { // Else make a new ring
-		var s struct{}
-		node.CreateRing(s, &s)
+		node.createRing()
 	}
 	go node.autoCheckPredecessor()
 	go node.autoStabilize()
@@ -270,8 +295,6 @@ func InitNode(port string, address string) {
 	http.Serve(l, nil)
 }
 
-// Very annoying, will be using strings as IDs instead of a byte slice, since slices
-// cannot be used as a key in a map. Still, IDs are simply sha1sums of the address.
 func genID(port string) Key {
 	hostname, _ := os.Hostname()
 	h := sha1.New()
