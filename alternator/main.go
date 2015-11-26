@@ -65,6 +65,9 @@ func main() {
 			err = client.Call("Alternator."+command, name, &val)
 			checkErr("RPC failed", err)
 			fmt.Println(string(val))
+		case "LeaveRing":
+			err = client.Call("Alternator."+command, struct{}{}, &struct{}{})
+			checkErr("RPC failed", err)
 		}
 	} else {
 		// Create a new node

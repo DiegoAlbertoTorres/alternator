@@ -107,7 +107,7 @@ func (altNode *Alternator) GetPredecessor(_ struct{}, ret *ExtNode) error {
 // JoinRequest handles a request by another node to join the ring
 func (altNode *Alternator) JoinRequest(other *ExtNode, _ *struct{}) error {
 	// Add join to history
-	newEntry := histEntry{time.Now(), histJoin, other}
+	newEntry := HistEntry{time.Now(), histJoin, other}
 	altNode.insertToHistory(newEntry)
 	altNode.Fingers.Insert(other)
 	return nil
@@ -121,18 +121,35 @@ func (altNode *Alternator) joinRing(broker *ExtNode) error {
 		return ErrJoinFail
 	}
 
+	// Synchronize history with broker
+	altNode.syncFingers(broker)
+
 	altNode.setPredecessor(nil, "Join()")
 	err = makeRemoteCall(broker, "FindSuccessor", altNode.ID, &altNode.Successor)
 	if err != nil {
 		log.Fatal("Join failed: ", err)
 	}
-	// Add own join to history
-	self := altNode.selfExt()
-	altNode.insertToHistory(histEntry{time.Now(), histJoin, self})
-	altNode.Fingers.Insert(self)
 
 	fmt.Println("Joined ring")
 	fmt.Println(altNode.string())
+	return nil
+}
+
+// LeaveRequest handles a leave request. It appends the departure entry to the node's history.
+func (altNode *Alternator) LeaveRequest(entry HistEntry, _ *struct{}) error {
+	altNode.insertToHistory(entry)
+	altNode.Fingers.Remove(entry.Node)
+	return nil
+}
+
+// LeaveRing makes the node leave the ring it is in
+func (altNode *Alternator) LeaveRing(_ struct{}, _ *struct{}) error {
+	departureEntry := HistEntry{time.Now(), histLeave, altNode.selfExt()}
+	err := makeRemoteCall(altNode.Fingers.getRandomFinger(), "LeaveRequest", departureEntry, &struct{}{})
+	for err != nil {
+		err = makeRemoteCall(altNode.Fingers.getRandomFinger(), "Leave Request", departureEntry, &struct{}{})
+	}
+	os.Exit(0)
 	return nil
 }
 
@@ -237,7 +254,7 @@ func (altNode *Alternator) createRing() {
 	successor.Address = altNode.Address
 	// Add own join to ring
 	self := altNode.selfExt()
-	altNode.insertToHistory(histEntry{time.Now(), histJoin, self})
+	altNode.insertToHistory(HistEntry{time.Now(), histJoin, self})
 	altNode.Fingers.Insert(self)
 
 	altNode.setSuccessor(&successor, "createRing()")
@@ -290,7 +307,7 @@ func InitNode(port string, address string) {
 	}
 	go node.autoCheckPredecessor()
 	go node.autoStabilize()
-	go node.autoUpdateFingers()
+	go node.autoSyncFingers()
 	fmt.Println("Listening on port " + port)
 	http.Serve(l, nil)
 }

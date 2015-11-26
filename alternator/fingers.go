@@ -120,9 +120,9 @@ func (fingers Fingers) String() (str string) {
 // 	}
 // }
 
-func (altNode *Alternator) getRandomFinger() *ExtNode {
+func (fingers Fingers) getRandomFinger() *ExtNode {
 	// i := 0
-	for _, finger := range altNode.Fingers.Map {
+	for _, finger := range fingers.Map {
 		// if i == 1 {
 		// 	return getExt(finger)
 		// }
@@ -146,12 +146,17 @@ func (altNode *Alternator) rebuildFingers() {
 	altNode.Fingers = newFingers
 }
 
-func (altNode *Alternator) autoUpdateFingers() {
+func (altNode *Alternator) syncFingers(ext *ExtNode) {
+	if changes := altNode.syncMemberHist(ext); changes {
+		altNode.rebuildFingers()
+	}
+}
+
+// autoSyncFingers automatically syncs fingers with a random node
+func (altNode *Alternator) autoSyncFingers() {
 	for {
-		if changes := altNode.updateMemberHist(); changes {
-			altNode.rebuildFingers()
-		}
-		fmt.Println("Fingers are " + altNode.Fingers.String())
+		altNode.syncFingers(altNode.Fingers.getRandomFinger())
+		// fmt.Println("Fingers are " + altNode.Fingers.String())
 		// altNode.printHist()
 		time.Sleep(fingerUpdateTime * time.Millisecond)
 	}
