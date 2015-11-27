@@ -3,7 +3,6 @@ package main
 import (
 	"crypto/sha1"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -31,14 +30,12 @@ var minKey = sliceToKey(minSlice)
 
 // Alternator is a node in Alternator
 type Alternator struct {
-	ID          Key
-	Address     string
-	Port        string
-	Successor   *ExtNode
-	Predecessor *ExtNode
-	Fingers     Fingers
-	MemberHist  MemberHist
-	DB          *bolt.DB
+	ID         Key
+	Address    string
+	Port       string
+	Members    Members
+	MemberHist MemberHist
+	DB         *bolt.DB
 }
 
 // ClientMap is a map of addresses to rpc clients
@@ -46,63 +43,30 @@ var ClientMap map[string]*rpc.Client
 
 /* Alternator methods */
 
-// GetFingers sets ret to this node's fingers
-// func (altNode *Alternator) GetFingers(_ struct{}, ret *[]*ExtNode) error {
-// 	*ret = altNode.Fingers.Slice
+// GetMembers sets ret to this node's members
+// func (altNode *Alternator) GetMembers(_ struct{}, ret *[]*Peer) error {
+// 	*ret = altNode.Members.Slice
 // 	return nil
 // }
 
 // func (altNode *Alternator) expelForeignKeys(elem *list.Element) {
-// 	ext := getExt(elem)
+// 	peer := getExt(elem)
 // 	var prevID Key
 // 	if prev := getExt(elem.Prev()); prev != nil {
 // 		prevID = prev.ID
 // 	} else {
 // 		prevID = minKey
 // 	}
-// 	keys, vals := altNode.dbGetRange(prevID, ext.ID)
+// 	keys, vals := altNode.dbGetRange(prevID, peer.ID)
 // 	for i := range keys {
-// 		err := makeRemoteCall(ext, "DBPut", PutArgs{keys[i], vals[i]}, &struct{}{})
+// 		err := makeRemoteCall(peer, "DBPut", PutArgs{keys[i], vals[i]}, &struct{}{})
 // 		checkLogErr(err)
 // 		if err == nil {
 // 			altNode.DBDelete(keys[i], &struct{}{})
 // 		}
 // 	}
-// 	altNode.dbDeleteRange(prevID, ext.ID)
+// 	altNode.dbDeleteRange(prevID, peer.ID)
 // }
-
-func (altNode *Alternator) setSuccessor(new *ExtNode, caller string) {
-	altNode.Successor = new
-	fmt.Println(caller + " changed successor:")
-	fmt.Println(altNode.string())
-}
-
-func (altNode *Alternator) setPredecessor(new *ExtNode, caller string) {
-	if new == nil {
-		altNode.Predecessor = nil
-		// fmt.Println(altNode.string())
-		// fmt.Println("Changed predecessor to <nil>")
-		return
-	}
-	altNode.Predecessor = new
-	fmt.Println(caller + " changed predecessor:")
-	fmt.Println(altNode.string())
-}
-
-// GetSuccessor sets ret to the successor of an alternode
-func (altNode *Alternator) GetSuccessor(_ struct{}, ret *ExtNode) error {
-	extNodeCopy(altNode.Successor, ret)
-	return nil
-}
-
-// GetPredecessor sets ret to the predecessor of an alternode
-func (altNode *Alternator) GetPredecessor(_ struct{}, ret *ExtNode) error {
-	if altNode.Predecessor == nil {
-		return errors.New(ErrNilPredecessor)
-	}
-	extNodeCopy(altNode.Predecessor, ret)
-	return nil
-}
 
 // JoinRequestArgs is the set of return parameters to a JoinRequest
 type JoinRequestArgs struct {
@@ -111,7 +75,7 @@ type JoinRequestArgs struct {
 }
 
 // JoinRequest handles a request by another node to join the ring
-func (altNode *Alternator) JoinRequest(other *ExtNode, ret *JoinRequestArgs) error {
+func (altNode *Alternator) JoinRequest(other *Peer, ret *JoinRequestArgs) error {
 	// Find pairs in joiner's range
 	keys, vals := altNode.dbGetRange(altNode.ID, other.ID)
 	// fmt.Printf("giving pairs in range %s to %s\n", keyToString(altNode.ID), keyToString(other.ID))
@@ -122,15 +86,16 @@ func (altNode *Alternator) JoinRequest(other *ExtNode, ret *JoinRequestArgs) err
 	// Add join to history
 	newEntry := HistEntry{time.Now(), histJoin, *other}
 	altNode.insertToHistory(newEntry)
-	altNode.Fingers.Insert(other)
+	altNode.Members.Insert(other)
+	fmt.Println("Members changed:", altNode.Members)
 	ret.Keys = keys
 	ret.Vals = vals
 	return nil
 }
 
 // Join joins a node into an existing ring
-func (altNode *Alternator) joinRing(broker *ExtNode) error {
-	var successor ExtNode
+func (altNode *Alternator) joinRing(broker *Peer) error {
+	var successor Peer
 	// Find future successor using some broker in ring
 	err := makeRemoteCall(broker, "FindSuccessor", altNode.ID, &successor)
 	if err != nil {
@@ -143,21 +108,14 @@ func (altNode *Alternator) joinRing(broker *ExtNode) error {
 	if err != nil {
 		return ErrJoinFail
 	}
-	fmt.Println("new pairs are:")
-	for i := range kvPairs.Keys {
-		fmt.Println(keyToString(kvPairs.Keys[i]))
-	}
+	// for i := range kvPairs.Keys {
+	// 	fmt.Println(keyToString(kvPairs.Keys[i]))
+	// }
 
 	// Synchronize history with successor
-	altNode.syncFingers(&successor)
+	altNode.syncMembers(&successor)
 
-	altNode.setPredecessor(nil, "Join()")
-
-	// Atomic join
-	altNode.Successor = &successor
-
-	fmt.Println("Joined ring")
-	fmt.Println(altNode.string())
+	fmt.Println("Successfully joined ring")
 	return nil
 }
 
@@ -174,7 +132,8 @@ func (altNode *Alternator) LeaveRequest(args *LeaveRequestArgs, _ *struct{}) err
 	batchArgs := BatchPutArgs{metaDataBucket, args.Keys, args.Vals}
 	altNode.BatchPut(batchArgs, &struct{}{})
 	altNode.insertToHistory(args.DepartureEntry)
-	altNode.Fingers.Remove(&args.DepartureEntry.Node)
+	altNode.Members.Remove(&args.DepartureEntry.Node)
+	fmt.Println("Members changed:", altNode.Members)
 	// altNode.setPredecessor(altNode.getNthPredecessor(1), "LeaveRequest()")
 
 	// Replicate in one more
@@ -185,18 +144,18 @@ func (altNode *Alternator) LeaveRequest(args *LeaveRequestArgs, _ *struct{}) err
 
 // LeaveRing makes the node leave the ring it is in
 func (altNode *Alternator) LeaveRing(_ struct{}, _ *struct{}) error {
-	if (altNode.Successor == nil) || (*altNode.Successor == altNode.selfExt()) {
+	successor := altNode.getSuccessor()
+	if *successor == altNode.selfExt() {
 		os.Exit(0)
 		return nil
 	}
-	keys, vals := altNode.dbGetRange(altNode.Predecessor.ID, altNode.ID) // Gather entries
+	keys, vals := altNode.dbGetRange(altNode.getPredecessor().ID, altNode.ID) // Gather entries
 	departureEntry := HistEntry{time.Now(), histLeave, altNode.selfExt()}
 	args := LeaveRequestArgs{keys, vals, departureEntry}
 
 	var err error
 	// Leave by notifying successor
-	fmt.Println("asking for permission")
-	err = makeRemoteCall(altNode.Successor, "LeaveRequest", &args, &struct{}{})
+	err = makeRemoteCall(successor, "LeaveRequest", &args, &struct{}{})
 	if err != nil {
 		return ErrLeaveFail
 	}
@@ -206,56 +165,30 @@ func (altNode *Alternator) LeaveRing(_ struct{}, _ *struct{}) error {
 
 func (altNode Alternator) string() (str string) {
 	str += "ID: " + keyToString(altNode.ID) + "\n"
-	if altNode.Successor != nil {
-		str += "Successor: " + keyToString(altNode.Successor.ID) + "\n"
-	} else {
-		str += "Successor: <nil>" + "\n"
-	}
-
-	if altNode.Predecessor != nil {
-		str += "Predecessor: " + keyToString(altNode.Predecessor.ID) + "\n"
-	} else {
-		str += "Predecessor: <nil>" + "\n"
-	}
+	// if altNode.Successor != nil {
+	// 	str += "Successor: " + keyToString(altNode.Successor.ID) + "\n"
+	// } else {
+	// 	str += "Successor: <nil>" + "\n"
+	// }
+	//
+	// if altNode.Predecessor != nil {
+	// 	str += "Predecessor: " + keyToString(altNode.Predecessor.ID) + "\n"
+	// } else {
+	// 	str += "Predecessor: <nil>" + "\n"
+	// }
 	return
 }
 
 // FindSuccessor finds the successor of a key in the ring
-func (altNode *Alternator) FindSuccessor(k Key, ret *ExtNode) error {
-	succ, err := altNode.Fingers.FindSuccessor(k)
+func (altNode *Alternator) FindSuccessor(k Key, ret *Peer) error {
+	succ, err := altNode.Members.FindSuccessor(k)
 	*ret = *getExt(succ)
 	return err
 }
 
-// selfExt returns an extNode equivalent of altNode
-func (altNode *Alternator) selfExt() ExtNode {
-	return ExtNode{altNode.ID, altNode.Address}
-}
-
-// stabilize fixes the successors periodically
-func (altNode *Alternator) stabilize() {
-	// fmt.Println("Stabilizing")
-
-	var temp ExtNode
-	err := makeRemoteCall(altNode.Successor, "GetPredecessor", struct{}{}, &temp)
-	// checkErr("GetPredecessor error", err)
-
-	if err == nil && inRange(temp.ID, altNode.ID, altNode.Successor.ID) {
-		altNode.setSuccessor(&temp, "stabilize():")
-	}
-
-	self := altNode.selfExt()
-	// fmt.Println("Notifying", altNode.Successor)
-	makeRemoteCall(altNode.Successor, "Notify", self, nil)
-}
-
-// Notify is called by another node when it thinks it might be our predecessor
-func (altNode *Alternator) Notify(candidate *ExtNode, _ *struct{}) error {
-	// Should update fingers accordingly?
-	if (altNode.Predecessor == nil) || (inRange(candidate.ID, altNode.Predecessor.ID, altNode.ID)) {
-		altNode.setPredecessor(candidate, "Notify()")
-	}
-	return nil
+// selfExt returns an peerNode equivalent of altNode
+func (altNode *Alternator) selfExt() Peer {
+	return Peer{altNode.ID, altNode.Address}
 }
 
 // Heartbeat returns an 'OK' to the caller
@@ -267,23 +200,24 @@ func (altNode *Alternator) Heartbeat(_ struct{}, ret *string) error {
 
 // checkPredecessor checks if the predecessor has failed
 func (altNode *Alternator) checkPredecessor() {
-	if (altNode.Predecessor == nil) || (keyCompare(altNode.Predecessor.ID, altNode.ID) == 0) {
+	predecessor := altNode.getPredecessor()
+	if keyCompare(predecessor.ID, altNode.ID) == 0 {
 		return
 	}
 	// Ping
 	c := make(chan error, 1)
 	beat := ""
-	// fmt.Println("Sending heartbeat to " + altNode.Predecessor.ID)
 	go func() {
-		c <- makeRemoteCall(altNode.Predecessor, "Heartbeat", struct{}{}, &beat)
+		c <- makeRemoteCall(predecessor, "Heartbeat", struct{}{}, &beat)
 	}()
 
+	// TODO: do something smart with heartbeat failures to autodetect departures
 	select {
 	case err := <-c:
 		// Something wrong
 		if (err != nil) || (beat != "OK") {
 			// Kill connection
-			closeRPC(altNode.Predecessor)
+			closeRPC(predecessor)
 
 			// altNode.setPredecessor(nil, "checkPredecessor()")
 		}
@@ -291,7 +225,7 @@ func (altNode *Alternator) checkPredecessor() {
 	case <-time.After(heartbeatTimeout * time.Millisecond):
 		fmt.Println("Predecessor stopped responding, ceasing connection")
 		// Kill connection
-		closeRPC(altNode.Predecessor)
+		closeRPC(predecessor)
 
 		// altNode.setPredecessor(nil, "checkPredecessor()")
 	}
@@ -299,30 +233,19 @@ func (altNode *Alternator) checkPredecessor() {
 
 // createRing creates a ring with this node as its only member
 func (altNode *Alternator) createRing() {
-	altNode.setPredecessor(nil, "createRing()")
-	var successor ExtNode
+	var successor Peer
 	successor.ID = altNode.ID
 	successor.Address = altNode.Address
 	// Add own join to ring
 	self := altNode.selfExt()
 	altNode.insertToHistory(HistEntry{time.Now(), histJoin, self})
-	altNode.Fingers.Insert(&self)
-
-	altNode.setSuccessor(&successor, "createRing()")
+	altNode.Members.Insert(&self)
 }
 
 func (altNode *Alternator) autoCheckPredecessor() {
 	for {
 		altNode.checkPredecessor()
 		time.Sleep(heartbeatTime * time.Millisecond)
-	}
-}
-
-// AutoStabilize runs Stabilize() on timed intervals
-func (altNode *Alternator) autoStabilize() {
-	for {
-		altNode.stabilize()
-		time.Sleep(stableTime * time.Millisecond)
 	}
 }
 
@@ -358,22 +281,22 @@ func InitNode(port string, address string) {
 	node.Address = "127.0.0.1:" + port
 	node.Port = port
 	node.ID = genID(port)
-	node.Fingers.init()
+	node.Members.init()
 	node.initDB()
 
 	// Join a ring if address is specified
 	if address != "" {
 		// We do not know the ID of the node connecting to, use stand-in
 		var k Key
-		broker := ExtNode{k, address}
+		broker := Peer{k, address}
 		node.joinRing(&broker)
 	} else { // Else make a new ring
 		node.createRing()
 	}
 	go node.autoCheckPredecessor()
-	// go node.autoStabilize()
-	go node.autoSyncFingers()
+	go node.autoSyncMembers()
 	go node.sigHandler()
+	fmt.Println(node.string())
 	fmt.Println("Listening on port " + port)
 	http.Serve(l, nil)
 }

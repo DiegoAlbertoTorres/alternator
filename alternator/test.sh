@@ -1,7 +1,7 @@
 #!/bin/bash
-
 # Terminal to be used. Preferably one that supports TRUECOLOR.
 export ALTERM=konsole
+rm ~/.alternator/*.db
 
 # Create a ring with a good distribution
 go install git/alternator

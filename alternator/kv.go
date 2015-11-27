@@ -150,7 +150,7 @@ type Metadata struct {
 // Put a (key, value) pair in the system
 func (altNode *Alternator) Put(args *PutArgs, _ *struct{}) error {
 	k := stringToKey(args.Name)
-	var successor ExtNode
+	var successor Peer
 	err := altNode.FindSuccessor(k, &successor)
 
 	// Pass the call to successor
@@ -166,10 +166,10 @@ func (altNode *Alternator) Put(args *PutArgs, _ *struct{}) error {
 	// Store in chain
 	i := 0
 	success := 0
-	mdReplicants := make([]*ExtNode, 0, N)
-	for current := altNode.Fingers.Map[altNode.ID]; i < N; current = current.Next() {
+	mdReplicants := make([]*Peer, 0, N)
+	for current := altNode.Members.Map[altNode.ID]; i < N; current = current.Next() {
 		if current == nil {
-			current = altNode.Fingers.List.Front()
+			current = altNode.Members.List.Front()
 		}
 		err := makeRemoteCall(getExt(current), "PutMetadata", putMDArgs, &struct{}{})
 		if err != nil {
@@ -189,12 +189,12 @@ func (altNode *Alternator) Put(args *PutArgs, _ *struct{}) error {
 	}
 
 	// Put data in replicants
-	dataReplicants := make([]*ExtNode, 0, len(args.Replicants))
+	dataReplicants := make([]*Peer, 0, len(args.Replicants))
 	success = 0
 	for _, repID := range args.Replicants {
-		repLNode, ok := altNode.Fingers.Map[repID]
+		repLNode, ok := altNode.Members.Map[repID]
 		if !ok {
-			log.Print("Fingers map wrong error")
+			log.Print("Members map wrong error")
 			continue
 		}
 		rep := getExt(repLNode)
@@ -217,7 +217,7 @@ func (altNode *Alternator) Put(args *PutArgs, _ *struct{}) error {
 }
 
 // undoPutData undoes all data puts for a key in a set of nodes
-func (altNode *Alternator) undoPutData(k Key, nodes []*ExtNode) error {
+func (altNode *Alternator) undoPutData(k Key, nodes []*Peer) error {
 	for _, node := range nodes {
 		makeRemoteCall(node, "DropKeyData", k, &struct{}{})
 	}
@@ -226,7 +226,7 @@ func (altNode *Alternator) undoPutData(k Key, nodes []*ExtNode) error {
 }
 
 // undoPutMD undoes all metadata puts for a key in a set of nodes
-func (altNode *Alternator) undoPutMD(k Key, nodes []*ExtNode) error {
+func (altNode *Alternator) undoPutMD(k Key, nodes []*Peer) error {
 	for _, node := range nodes {
 		makeRemoteCall(node, "DropKeyMD", k, &struct{}{})
 	}
@@ -270,12 +270,12 @@ func (altNode *Alternator) Get(name string, ret *[]byte) error {
 	var rawMD []byte
 
 	// Get replicants from metadata chain
-	var successor ExtNode
+	var successor Peer
 	altNode.FindSuccessor(k, &successor)
 	i := 0
-	for current := altNode.Fingers.Map[successor.ID]; i < N; current = current.Next() {
+	for current := altNode.Members.Map[successor.ID]; i < N; current = current.Next() {
 		if current == nil {
-			current = altNode.Fingers.List.Front()
+			current = altNode.Members.List.Front()
 		}
 		fmt.Printf("asking %s\n", keyToString(getExt(current).ID))
 		i++
@@ -288,8 +288,14 @@ func (altNode *Alternator) Get(name string, ret *[]byte) error {
 
 	// Get data from some replicant
 	for _, repID := range md.Replicants {
-		rep := getExt(altNode.Fingers.Map[repID])
+		rep := getExt(altNode.Members.Map[repID])
+		// In case rep left
+		// TODO: this occurs because when replicants leave, nobody re-replicates their data
+		if rep == nil {
+			continue
+		}
 		var result []byte
+		fmt.Println("trying to get data from", rep)
 		err := makeRemoteCall(rep, "GetData", k, &result)
 		if err == nil {
 			*ret = result
@@ -297,6 +303,7 @@ func (altNode *Alternator) Get(name string, ret *[]byte) error {
 		}
 	}
 	// None of the replicants had the data?
+	fmt.Println("***************************hit here")
 	return ErrDataLost
 }
 
@@ -318,6 +325,7 @@ func (altNode *Alternator) BatchPut(args BatchPutArgs, _ *struct{}) error {
 			if err != nil {
 				anyError = true
 			}
+			log.Printf("Stored metadata for%s\n", keyToString(args.Keys[i]))
 		}
 		if anyError {
 			return ErrBatchPutIncomplete

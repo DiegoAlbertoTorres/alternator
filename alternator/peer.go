@@ -1,26 +1,26 @@
 package main
 
-// ExtNode is an external, non-local node
-type ExtNode struct {
+// Peer is an peerernal, non-local node
+type Peer struct {
 	ID      Key
 	Address string
 }
 
-func (extNode ExtNode) String() (str string) {
-	str += "ID: " + keyToString(extNode.ID)
-	// str += "Address: " + extNode.Address + "\n"
+func (peerNode Peer) String() (str string) {
+	str += "ID: " + keyToString(peerNode.ID)
+	// str += "Address: " + peerNode.Address + "\n"
 	return
 }
 
 // Unresolved: why does this not need to be an actual copy?
-func extNodeCopy(src *ExtNode, dst *ExtNode) {
+func peerNodeCopy(src *Peer, dst *Peer) {
 	// fmt.Println("copying this " + keyToString(src.ID))
 	// fmt.Printf("copied %d\n", copy(dst.ID, src.ID))
 	dst.ID = src.ID
 	dst.Address = src.Address
 }
 
-func extCompare(a *ExtNode, b *ExtNode) bool {
+func peerCompare(a *Peer, b *Peer) bool {
 	if (a.ID == b.ID) && (a.Address == b.Address) {
 		return true
 	}

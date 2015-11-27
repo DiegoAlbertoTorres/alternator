@@ -36,7 +36,7 @@ func main() {
 		case "FindSuccessor":
 			key := randomKey()
 			fmt.Println("Finding successor of " + keyToString(key))
-			var reply ExtNode
+			var reply Peer
 			err = client.Call("Alternator."+command, key, &reply)
 			checkErr("RPC failed", err)
 			fmt.Println(reply.String())

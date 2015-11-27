@@ -7,7 +7,7 @@ import (
 )
 
 // makeRemoteCall calls a function at a remote node
-func makeRemoteCall(callee *ExtNode, call string, args interface{}, result interface{}) error {
+func makeRemoteCall(callee *Peer, call string, args interface{}, result interface{}) error {
 	// Check if there is already a connection
 	var client *rpc.Client
 	var clientOpen bool
@@ -32,7 +32,7 @@ func makeRemoteCall(callee *ExtNode, call string, args interface{}, result inter
 	return err
 }
 
-func closeRPC(node *ExtNode) {
+func closeRPC(node *Peer) {
 	if node == nil {
 		return
 	}

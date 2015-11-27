@@ -12,7 +12,7 @@ type MemberHist []HistEntry
 type HistEntry struct {
 	Time  time.Time
 	Class int
-	Node  ExtNode
+	Node  Peer
 }
 
 // Entry classes
@@ -56,22 +56,22 @@ func (altNode *Alternator) GetMemberHist(_ struct{}, ret *[]HistEntry) error {
 	return nil
 }
 
-// syncMemberHist synchronizes the node's member history with an external node
-func (altNode *Alternator) syncMemberHist(ext *ExtNode) bool {
-	if ext == nil {
+// syncMemberHist synchronizes the node's member history with an peerernal node
+func (altNode *Alternator) syncMemberHist(peer *Peer) bool {
+	if peer == nil {
 		return false
 	}
-	var extMemberHist MemberHist
+	var peerMemberHist MemberHist
 
-	err := makeRemoteCall(ext, "GetMemberHist", struct{}{}, &extMemberHist)
-	// fmt.Printf("Comparing fingers with %v\n", ext)
-	// fmt.Printf("His history is %v\n", extMemberHist)
+	err := makeRemoteCall(peer, "GetMemberHist", struct{}{}, &peerMemberHist)
+	// fmt.Printf("Comparing members with %v\n", peer)
+	// fmt.Printf("His history is %v\n", peerMemberHist)
 	if err != nil {
 		return false
 	}
 
 	var changes bool
-	altNode.MemberHist, changes = mergeHistories(altNode.MemberHist, extMemberHist)
+	altNode.MemberHist, changes = mergeHistories(altNode.MemberHist, peerMemberHist)
 	// fmt.Printf("my new history is %v\n", altNode.MemberHist)
 	return changes
 }
