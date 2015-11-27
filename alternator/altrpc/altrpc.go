@@ -1,13 +1,22 @@
-package main
+package altrpc
 
 import (
 	"fmt"
+	p "git/alternator/peer"
 	"log"
 	"net/rpc"
 )
 
-// makeRemoteCall calls a function at a remote node
-func makeRemoteCall(callee *Peer, call string, args interface{}, result interface{}) error {
+// ClientMap is a map of addresses to rpc clients
+var ClientMap map[string]*rpc.Client
+
+func init() {
+	// Init connection map
+	ClientMap = make(map[string]*rpc.Client)
+}
+
+// MakeRemoteCall calls a function at a remote node
+func MakeRemoteCall(callee *p.Peer, call string, args interface{}, result interface{}) error {
 	// Check if there is already a connection
 	var client *rpc.Client
 	var clientOpen bool
@@ -26,13 +35,14 @@ func makeRemoteCall(callee *Peer, call string, args interface{}, result interfac
 	err = client.Call("Alternator."+call, args, result)
 	if err != nil {
 		log.Print("RPC call failed, client "+callee.Address+" down? ", err)
-		closeRPC(callee)
+		Close(callee)
 	}
 
 	return err
 }
 
-func closeRPC(node *Peer) {
+// Close closes and RPC connection
+func Close(node *p.Peer) {
 	if node == nil {
 		return
 	}

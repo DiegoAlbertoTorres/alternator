@@ -25,7 +25,7 @@ func serialize(obj interface{}) []byte {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	err := enc.Encode(obj)
-	checkFatal(err)
+	checkErr("serialization failed", err)
 	return buf.Bytes()
 }
 

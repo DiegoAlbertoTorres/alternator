@@ -1,13 +1,17 @@
-package main
+package peer
+
+import (
+	k "git/alternator/key"
+)
 
 // Peer is an peerernal, non-local node
 type Peer struct {
-	ID      Key
+	ID      k.Key
 	Address string
 }
 
 func (peerNode Peer) String() (str string) {
-	str += "ID: " + keyToString(peerNode.ID)
+	str += "ID: " + peerNode.ID.String()
 	// str += "Address: " + peerNode.Address + "\n"
 	return
 }

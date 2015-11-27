@@ -4,13 +4,16 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	k "git/alternator/key"
+	p "git/alternator/peer"
 	"net/rpc"
 	"os"
 )
 
 // Config stores Alternator's configuration settings
 var Config struct {
-	fullKeys bool
+	fullKeys       bool
+	memberSyncTime int
 }
 
 var sigChan chan os.Signal
@@ -25,7 +28,8 @@ func main() {
 	flag.StringVar(&addr, "target", "127.0.0.1", "target address for commands.")
 	flag.StringVar(&command, "command", "", "name of command.")
 	flag.StringVar(&joinPort, "join", "0", "joins the ring that the node at [address]:[port] belongs to.")
-	flag.BoolVar(&Config.fullKeys, "fullKeys", false, "if true all keys (hashes) are printed completely")
+	flag.IntVar(&Config.memberSyncTime, "memberSyncTime", 400, "sets the time between membership syncs with a random node.")
+	flag.BoolVar(&Config.fullKeys, "fullKeys", false, "if true all keys (hashes) are printed completely.")
 	flag.Parse()
 
 	if command != "" {
@@ -34,9 +38,9 @@ func main() {
 		checkErr("dialing:", err)
 		switch command {
 		case "FindSuccessor":
-			key := randomKey()
-			fmt.Println("Finding successor of " + keyToString(key))
-			var reply Peer
+			key := k.Random()
+			fmt.Println("Finding successor of ", key)
+			var reply p.Peer
 			err = client.Call("Alternator."+command, key, &reply)
 			checkErr("RPC failed", err)
 			fmt.Println(reply.String())
@@ -48,14 +52,14 @@ func main() {
 			// Prepare key and value
 			name := args[0]
 			val := []byte(args[1])
-			var dests []Key
+			var dests []k.Key
 			if len(args[2:]) < 0 {
 				fmt.Println("Need to give at least one destination node")
 				return
 			}
 			for _, arg := range args[2:] {
 				dest, _ := hex.DecodeString(arg)
-				dests = append(dests, sliceToKey(dest))
+				dests = append(dests, k.SliceToKey(dest))
 			}
 
 			fmt.Println("Putting pair " + name + "," + args[1])

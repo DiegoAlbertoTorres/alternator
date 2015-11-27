@@ -2,9 +2,9 @@ package main
 
 import (
 	"crypto/sha1"
-	"encoding/hex"
 	"fmt"
 	"io"
+	"log"
 	"math/rand"
 	"net"
 	"net/http"
@@ -15,6 +15,11 @@ import (
 	"strings"
 	"time"
 
+	"git/alternator/altrpc"
+	k "git/alternator/key"
+	m "git/alternator/members"
+	p "git/alternator/peer"
+
 	"github.com/boltdb/bolt"
 )
 
@@ -23,43 +28,35 @@ const stableTime = 1000
 const heartbeatTime = 1000
 const heartbeatTimeout = 400
 
-var maxSlice, _ = hex.DecodeString("ffffffffffffffffffffffffffffffffffffffff")
-var maxKey = sliceToKey(maxSlice)
-var minSlice, _ = hex.DecodeString("0000000000000000000000000000000000000000")
-var minKey = sliceToKey(minSlice)
-
 // Alternator is a node in Alternator
 type Alternator struct {
-	ID         Key
+	ID         k.Key
 	Address    string
 	Port       string
-	Members    Members
-	MemberHist MemberHist
+	Members    m.Members
+	MemberHist m.History
 	DB         *bolt.DB
 }
-
-// ClientMap is a map of addresses to rpc clients
-var ClientMap map[string]*rpc.Client
 
 /* Alternator methods */
 
 // GetMembers sets ret to this node's members
-// func (altNode *Alternator) GetMembers(_ struct{}, ret *[]*Peer) error {
+// func (altNode *Alternator) GetMembers(_ struct{}, ret *[]*p.Peer) error {
 // 	*ret = altNode.Members.Slice
 // 	return nil
 // }
 
 // func (altNode *Alternator) expelForeignKeys(elem *list.Element) {
-// 	peer := getExt(elem)
+// 	peer := m.GetPeer(elem)
 // 	var prevID Key
-// 	if prev := getExt(elem.Prev()); prev != nil {
+// 	if prev := m.GetPeer(elem.Prev()); prev != nil {
 // 		prevID = prev.ID
 // 	} else {
 // 		prevID = minKey
 // 	}
 // 	keys, vals := altNode.dbGetRange(prevID, peer.ID)
 // 	for i := range keys {
-// 		err := makeRemoteCall(peer, "DBPut", PutArgs{keys[i], vals[i]}, &struct{}{})
+// 		err := altrpc.MakeRemoteCall(peer, "DBPut", PutArgs{keys[i], vals[i]}, &struct{}{})
 // 		checkLogErr(err)
 // 		if err == nil {
 // 			altNode.DBDelete(keys[i], &struct{}{})
@@ -70,21 +67,21 @@ var ClientMap map[string]*rpc.Client
 
 // JoinRequestArgs is the set of return parameters to a JoinRequest
 type JoinRequestArgs struct {
-	Keys []Key
+	Keys []k.Key
 	Vals [][]byte
 }
 
 // JoinRequest handles a request by another node to join the ring
-func (altNode *Alternator) JoinRequest(other *Peer, ret *JoinRequestArgs) error {
+func (altNode *Alternator) JoinRequest(other *p.Peer, ret *JoinRequestArgs) error {
 	// Find pairs in joiner's range
 	keys, vals := altNode.dbGetRange(altNode.ID, other.ID)
 	// fmt.Printf("giving pairs in range %s to %s\n", keyToString(altNode.ID), keyToString(other.ID))
 	for i := range keys {
-		fmt.Println(keyToString(keys[i]))
+		fmt.Println(keys[i])
 	}
 
 	// Add join to history
-	newEntry := HistEntry{time.Now(), histJoin, *other}
+	newEntry := m.HistEntry{time.Now(), m.HistJoin, *other}
 	altNode.insertToHistory(newEntry)
 	altNode.Members.Insert(other)
 	fmt.Println("Members changed:", altNode.Members)
@@ -94,17 +91,17 @@ func (altNode *Alternator) JoinRequest(other *Peer, ret *JoinRequestArgs) error 
 }
 
 // Join joins a node into an existing ring
-func (altNode *Alternator) joinRing(broker *Peer) error {
-	var successor Peer
+func (altNode *Alternator) joinRing(broker *p.Peer) error {
+	var successor p.Peer
 	// Find future successor using some broker in ring
-	err := makeRemoteCall(broker, "FindSuccessor", altNode.ID, &successor)
+	err := altrpc.MakeRemoteCall(broker, "FindSuccessor", altNode.ID, &successor)
 	if err != nil {
 		return ErrJoinFail
 	}
 
 	// Do join through future successor
 	var kvPairs JoinRequestArgs
-	err = makeRemoteCall(&successor, "JoinRequest", altNode.selfExt(), &kvPairs)
+	err = altrpc.MakeRemoteCall(&successor, "JoinRequest", altNode.selfExt(), &kvPairs)
 	if err != nil {
 		return ErrJoinFail
 	}
@@ -121,9 +118,9 @@ func (altNode *Alternator) joinRing(broker *Peer) error {
 
 // LeaveRequestArgs holds arguments for a leave request
 type LeaveRequestArgs struct {
-	Keys           []Key
+	Keys           []k.Key
 	Vals           [][]byte
-	DepartureEntry HistEntry
+	DepartureEntry m.HistEntry
 }
 
 // LeaveRequest handles a leave request. It appends the departure entry to the node's history.
@@ -137,7 +134,7 @@ func (altNode *Alternator) LeaveRequest(args *LeaveRequestArgs, _ *struct{}) err
 	// altNode.setPredecessor(altNode.getNthPredecessor(1), "LeaveRequest()")
 
 	// Replicate in one more
-	err := makeRemoteCall(altNode.getNthSuccessor(N-1), "BatchPut", batchArgs, &struct{}{})
+	err := altrpc.MakeRemoteCall(altNode.getNthSuccessor(N-1), "BatchPut", batchArgs, &struct{}{})
 	checkErr("Unhandled error", err)
 	return nil
 }
@@ -150,12 +147,12 @@ func (altNode *Alternator) LeaveRing(_ struct{}, _ *struct{}) error {
 		return nil
 	}
 	keys, vals := altNode.dbGetRange(altNode.getPredecessor().ID, altNode.ID) // Gather entries
-	departureEntry := HistEntry{time.Now(), histLeave, altNode.selfExt()}
+	departureEntry := m.HistEntry{time.Now(), m.HistLeave, altNode.selfExt()}
 	args := LeaveRequestArgs{keys, vals, departureEntry}
 
 	var err error
 	// Leave by notifying successor
-	err = makeRemoteCall(successor, "LeaveRequest", &args, &struct{}{})
+	err = altrpc.MakeRemoteCall(successor, "LeaveRequest", &args, &struct{}{})
 	if err != nil {
 		return ErrLeaveFail
 	}
@@ -164,7 +161,7 @@ func (altNode *Alternator) LeaveRing(_ struct{}, _ *struct{}) error {
 }
 
 func (altNode Alternator) string() (str string) {
-	str += "ID: " + keyToString(altNode.ID) + "\n"
+	str += "ID: " + altNode.ID.String() + "\n"
 	// if altNode.Successor != nil {
 	// 	str += "Successor: " + keyToString(altNode.Successor.ID) + "\n"
 	// } else {
@@ -180,15 +177,15 @@ func (altNode Alternator) string() (str string) {
 }
 
 // FindSuccessor finds the successor of a key in the ring
-func (altNode *Alternator) FindSuccessor(k Key, ret *Peer) error {
+func (altNode *Alternator) FindSuccessor(k k.Key, ret *p.Peer) error {
 	succ, err := altNode.Members.FindSuccessor(k)
-	*ret = *getExt(succ)
+	*ret = *m.GetPeer(succ)
 	return err
 }
 
 // selfExt returns an peerNode equivalent of altNode
-func (altNode *Alternator) selfExt() Peer {
-	return Peer{altNode.ID, altNode.Address}
+func (altNode *Alternator) selfExt() p.Peer {
+	return p.Peer{ID: altNode.ID, Address: altNode.Address}
 }
 
 // Heartbeat returns an 'OK' to the caller
@@ -201,14 +198,14 @@ func (altNode *Alternator) Heartbeat(_ struct{}, ret *string) error {
 // checkPredecessor checks if the predecessor has failed
 func (altNode *Alternator) checkPredecessor() {
 	predecessor := altNode.getPredecessor()
-	if keyCompare(predecessor.ID, altNode.ID) == 0 {
+	if k.Compare(predecessor.ID, altNode.ID) == 0 {
 		return
 	}
 	// Ping
 	c := make(chan error, 1)
 	beat := ""
 	go func() {
-		c <- makeRemoteCall(predecessor, "Heartbeat", struct{}{}, &beat)
+		c <- altrpc.MakeRemoteCall(predecessor, "Heartbeat", struct{}{}, &beat)
 	}()
 
 	// TODO: do something smart with heartbeat failures to autodetect departures
@@ -217,7 +214,7 @@ func (altNode *Alternator) checkPredecessor() {
 		// Something wrong
 		if (err != nil) || (beat != "OK") {
 			// Kill connection
-			closeRPC(predecessor)
+			altrpc.Close(predecessor)
 
 			// altNode.setPredecessor(nil, "checkPredecessor()")
 		}
@@ -225,7 +222,7 @@ func (altNode *Alternator) checkPredecessor() {
 	case <-time.After(heartbeatTimeout * time.Millisecond):
 		fmt.Println("Predecessor stopped responding, ceasing connection")
 		// Kill connection
-		closeRPC(predecessor)
+		altrpc.Close(predecessor)
 
 		// altNode.setPredecessor(nil, "checkPredecessor()")
 	}
@@ -233,13 +230,94 @@ func (altNode *Alternator) checkPredecessor() {
 
 // createRing creates a ring with this node as its only member
 func (altNode *Alternator) createRing() {
-	var successor Peer
+	var successor p.Peer
 	successor.ID = altNode.ID
 	successor.Address = altNode.Address
 	// Add own join to ring
 	self := altNode.selfExt()
-	altNode.insertToHistory(HistEntry{time.Now(), histJoin, self})
+	altNode.insertToHistory(m.HistEntry{time.Now(), m.HistJoin, self})
 	altNode.Members.Insert(&self)
+}
+
+func (altNode *Alternator) rebuildMembers() {
+	var newMembers m.Members
+	newMembers.Init()
+	for _, entry := range altNode.MemberHist {
+		switch entry.Class {
+		case m.HistJoin:
+			var copy p.Peer
+			copy = entry.Node
+			newMembers.Insert(&copy)
+		case m.HistLeave:
+			newMembers.Remove(&entry.Node)
+		}
+	}
+	altNode.Members = newMembers
+}
+
+func (altNode *Alternator) syncMembers(peer *p.Peer) {
+	if changes := altNode.syncMemberHist(peer); changes {
+		altNode.rebuildMembers()
+		fmt.Println("Members changed:", altNode.Members)
+		// fmt.Println("Members are ", altNode.Members)
+	}
+}
+
+// autoSyncMembers automatically syncs members with a random node
+func (altNode *Alternator) autoSyncMembers() {
+	for {
+		random := altNode.Members.GetRandomMember()
+		altNode.syncMembers(random)
+		// altNode.printHist()
+		time.Sleep(time.Duration(Config.memberSyncTime) * time.Millisecond)
+	}
+}
+
+func (altNode *Alternator) getSuccessor() *p.Peer {
+	succElt := altNode.Members.Map[altNode.ID]
+	succElt = succElt.Next()
+	if succElt == nil {
+		succElt = altNode.Members.List.Front()
+	}
+	return m.GetPeer(succElt)
+}
+
+func (altNode *Alternator) getPredecessor() *p.Peer {
+	predElt := altNode.Members.Map[altNode.ID]
+	predElt = predElt.Prev()
+	if predElt == nil {
+		predElt = altNode.Members.List.Back()
+	}
+	return m.GetPeer(predElt)
+}
+
+func (altNode *Alternator) getNthSuccessor(n int) *p.Peer {
+	// var current *list.Element
+	current := altNode.Members.Map[altNode.ID]
+	for i := 0; i < n; i++ {
+		current = current.Next()
+		if current == nil {
+			current = altNode.Members.List.Front()
+		}
+	}
+	if current == nil {
+		current = altNode.Members.List.Front()
+	}
+	return m.GetPeer(current)
+}
+
+func (altNode *Alternator) getNthPredecessor(n int) *p.Peer {
+	current := altNode.Members.Map[altNode.ID]
+	for i := 0; i < n; i++ {
+		current = current.Prev()
+		if current == nil {
+			current = altNode.Members.List.Back()
+		}
+	}
+	if current == nil {
+		current = altNode.Members.List.Back()
+	}
+	return m.GetPeer(current)
 }
 
 func (altNode *Alternator) autoCheckPredecessor() {
@@ -247,6 +325,36 @@ func (altNode *Alternator) autoCheckPredecessor() {
 		altNode.checkPredecessor()
 		time.Sleep(heartbeatTime * time.Millisecond)
 	}
+}
+
+// GetMemberHist returns the node's membership history
+func (altNode *Alternator) GetMemberHist(_ struct{}, ret *[]m.HistEntry) error {
+	*ret = altNode.MemberHist
+	return nil
+}
+
+// syncMemberHist synchronizes the node's member history with an peerernal node
+func (altNode *Alternator) syncMemberHist(peer *p.Peer) bool {
+	if peer == nil {
+		return false
+	}
+	var peerHist m.History
+
+	err := altrpc.MakeRemoteCall(peer, "GetMemberHist", struct{}{}, &peerHist)
+	// fmt.Printf("Comparing members with %v\n", peer)
+	// fmt.Printf("His history is %v\n", peerMemberHist)
+	if err != nil {
+		return false
+	}
+
+	var changes bool
+	altNode.MemberHist, changes = m.MergeHistories(altNode.MemberHist, peerHist)
+	// fmt.Printf("my new history is %v\n", altNode.MemberHist)
+	return changes
+}
+
+func (altNode *Alternator) insertToHistory(entry m.HistEntry) {
+	altNode.MemberHist = m.InsertEntry(altNode.MemberHist, entry)
 }
 
 func (altNode *Alternator) sigHandler() {
@@ -265,9 +373,6 @@ func (altNode *Alternator) sigHandler() {
 
 // InitNode initializes and alternode
 func InitNode(port string, address string) {
-	// Init connection map
-	ClientMap = make(map[string]*rpc.Client)
-
 	// Register node as RPC server
 	node := new(Alternator)
 	rpc.Register(node)
@@ -281,15 +386,19 @@ func InitNode(port string, address string) {
 	node.Address = "127.0.0.1:" + port
 	node.Port = port
 	node.ID = genID(port)
-	node.Members.init()
+	node.Members.Init()
 	node.initDB()
 
 	// Join a ring if address is specified
 	if address != "" {
 		// We do not know the ID of the node connecting to, use stand-in
-		var k Key
-		broker := Peer{k, address}
-		node.joinRing(&broker)
+		var k k.Key
+		broker := p.Peer{ID: k, Address: address}
+		err = node.joinRing(&broker)
+		if err != nil {
+			log.Print("Failed to join ring: ", err)
+			os.Exit(1)
+		}
 	} else { // Else make a new ring
 		node.createRing()
 	}
@@ -301,10 +410,10 @@ func InitNode(port string, address string) {
 	http.Serve(l, nil)
 }
 
-func genID(port string) Key {
+func genID(port string) k.Key {
 	hostname, _ := os.Hostname()
 	h := sha1.New()
 	rand.Seed(initSeed)
 	io.WriteString(h, hostname+port+strconv.Itoa(rand.Int()))
-	return sliceToKey(h.Sum(nil))
+	return k.SliceToKey(h.Sum(nil))
 }

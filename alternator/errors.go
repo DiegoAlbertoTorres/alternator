@@ -49,20 +49,12 @@ func assertRemoteErr(err error, typ string) bool {
 }
 
 // Returns true if no error
-func checkFatal(err error) bool {
+func checkFatal(msg string, err error) bool {
 	if err != nil {
 		// Exits
-		log.Fatal(err)
+		log.Fatal(msg+": ", err)
 	}
 	// No fatal
-	return false
-}
-
-func checkLogErr(err error) bool {
-	if err != nil {
-		log.Print(err)
-		return true
-	}
 	return false
 }
 
@@ -73,7 +65,7 @@ func printExit(msg string) {
 
 func checkErr(str string, err error) bool {
 	if err != nil {
-		log.Print(str+" ", err)
+		log.Print(str+": ", err)
 		return true
 	}
 	return false
