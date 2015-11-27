@@ -12,7 +12,7 @@ type MemberHist []HistEntry
 type HistEntry struct {
 	Time  time.Time
 	Class int
-	Node  *ExtNode
+	Node  ExtNode
 }
 
 // Entry classes
@@ -30,18 +30,15 @@ func (entry HistEntry) String() string {
 	case histLeave:
 		class = "leave"
 	}
-	return fmt.Sprintf("%v: %s, %v", entry.Time, class, entry.Node)
+	return fmt.Sprintf("%v: %s, %v\n", entry.Time, class, entry.Node)
 }
 
 func compareEntries(a HistEntry, b HistEntry) bool {
-	// fmt.Printf("Comparing:\n %v\nand\n%v\n", a, b)
 	if (a.Time.After(b.Time.Add(-1 * time.Second))) && (a.Time.Before(b.Time.Add(1 * time.Second))) {
-		if (a.Class == b.Class) && extCompare(a.Node, b.Node) {
-			// fmt.Println("Result: equal")
+		if (a.Class == b.Class) && (a.Node == b.Node) {
 			return true
 		}
 	}
-	// fmt.Println("Result: different")
 	return false
 }
 
@@ -67,12 +64,15 @@ func (altNode *Alternator) syncMemberHist(ext *ExtNode) bool {
 	var extMemberHist MemberHist
 
 	err := makeRemoteCall(ext, "GetMemberHist", struct{}{}, &extMemberHist)
+	// fmt.Printf("Comparing fingers with %v\n", ext)
+	// fmt.Printf("His history is %v\n", extMemberHist)
 	if err != nil {
 		return false
 	}
 
 	var changes bool
 	altNode.MemberHist, changes = mergeHistories(altNode.MemberHist, extMemberHist)
+	// fmt.Printf("my new history is %v\n", altNode.MemberHist)
 	return changes
 }
 
@@ -91,7 +91,7 @@ func insertEntry(hist MemberHist, entry HistEntry) MemberHist {
 			return hist
 		}
 	}
-	// // Add at end if needed
+	// Add at end if needed
 	hist = append(hist, entry)
 	return hist
 }

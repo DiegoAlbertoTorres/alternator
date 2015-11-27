@@ -27,6 +27,12 @@ var (
 
 	// ErrJoinFail occurs when a join request fails
 	ErrJoinFail = errors.New("join request failed")
+
+	// ErrLeaveFail occurs when a leave fails
+	ErrLeaveFail = errors.New("leave fail")
+
+	// ErrBatchPutIncomplete occurs when a batch put fails to put some pairs in the DB
+	ErrBatchPutIncomplete = errors.New("batch operation did not put all pairs successfully")
 )
 
 func assertRemoteErr(err error, typ string) bool {

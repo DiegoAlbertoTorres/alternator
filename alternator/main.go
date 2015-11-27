@@ -5,7 +5,15 @@ import (
 	"flag"
 	"fmt"
 	"net/rpc"
+	"os"
 )
+
+// Config stores Alternator's configuration settings
+var Config struct {
+	fullKeys bool
+}
+
+var sigChan chan os.Signal
 
 func main() {
 	var port string
@@ -17,6 +25,7 @@ func main() {
 	flag.StringVar(&addr, "target", "127.0.0.1", "target address for commands.")
 	flag.StringVar(&command, "command", "", "name of command.")
 	flag.StringVar(&joinPort, "join", "0", "joins the ring that the node at [address]:[port] belongs to.")
+	flag.BoolVar(&Config.fullKeys, "fullKeys", false, "if true all keys (hashes) are printed completely")
 	flag.Parse()
 
 	if command != "" {

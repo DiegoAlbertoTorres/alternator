@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"log"
 	"os"
@@ -55,6 +56,30 @@ func (altNode *Alternator) initDB() {
 			return nil
 		})
 	}
+}
+
+// dbGetRange returns all keys and values in a given range
+func (altNode *Alternator) dbGetRange(min, max Key) ([]Key, [][]byte) {
+	var keys []Key
+	var vals [][]byte
+
+	err := altNode.DB.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(metaDataBucket)
+		c := b.Cursor()
+
+		// Start seeking at min
+		c.Seek(min[:])
+		// Stop at max
+		for kslice, v := c.First(); kslice != nil && bytes.Compare(kslice, max[:]) < 0; kslice, v = c.Next() {
+			// TODO: Set a proper capacity for keys and vals?
+			keys = append(keys, sliceToKey(kslice))
+			vals = append(vals, v)
+		}
+		return nil
+	})
+	checkErr("Get range error error: ", err)
+
+	return keys, vals
 }
 
 func (altNode *Alternator) closeDB() {
@@ -273,4 +298,31 @@ func (altNode *Alternator) Get(name string, ret *[]byte) error {
 	}
 	// None of the replicants had the data?
 	return ErrDataLost
+}
+
+// BatchPutArgs are the arguments for a batch put
+type BatchPutArgs struct {
+	Bucket []byte
+	Keys   []Key
+	Vals   [][]byte
+}
+
+// BatchPut puts a set of key-value pairs in the specified bucket
+func (altNode *Alternator) BatchPut(args BatchPutArgs, _ *struct{}) error {
+	err := altNode.DB.Batch(func(tx *bolt.Tx) error {
+		b := tx.Bucket(args.Bucket)
+		anyError := false
+		for i := range args.Keys {
+			// TODO: handle error
+			err := b.Put(args.Keys[i][:], args.Vals[i])
+			if err != nil {
+				anyError = true
+			}
+		}
+		if anyError {
+			return ErrBatchPutIncomplete
+		}
+		return nil
+	})
+	return err
 }

@@ -6,12 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"math/rand"
 	"net"
 	"net/http"
 	"net/rpc"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"time"
@@ -104,50 +104,101 @@ func (altNode *Alternator) GetPredecessor(_ struct{}, ret *ExtNode) error {
 	return nil
 }
 
+// JoinRequestArgs is the set of return parameters to a JoinRequest
+type JoinRequestArgs struct {
+	Keys []Key
+	Vals [][]byte
+}
+
 // JoinRequest handles a request by another node to join the ring
-func (altNode *Alternator) JoinRequest(other *ExtNode, _ *struct{}) error {
+func (altNode *Alternator) JoinRequest(other *ExtNode, ret *JoinRequestArgs) error {
+	// Find pairs in joiner's range
+	keys, vals := altNode.dbGetRange(altNode.ID, other.ID)
+	// fmt.Printf("giving pairs in range %s to %s\n", keyToString(altNode.ID), keyToString(other.ID))
+	for i := range keys {
+		fmt.Println(keyToString(keys[i]))
+	}
+
 	// Add join to history
-	newEntry := HistEntry{time.Now(), histJoin, other}
+	newEntry := HistEntry{time.Now(), histJoin, *other}
 	altNode.insertToHistory(newEntry)
 	altNode.Fingers.Insert(other)
+	ret.Keys = keys
+	ret.Vals = vals
 	return nil
 }
 
 // Join joins a node into an existing ring
 func (altNode *Alternator) joinRing(broker *ExtNode) error {
-	// Start process
-	err := makeRemoteCall(broker, "JoinRequest", altNode.selfExt(), &struct{}{})
+	var successor ExtNode
+	// Find future successor using some broker in ring
+	err := makeRemoteCall(broker, "FindSuccessor", altNode.ID, &successor)
 	if err != nil {
 		return ErrJoinFail
 	}
 
-	// Synchronize history with broker
-	altNode.syncFingers(broker)
+	// Do join through future successor
+	var kvPairs JoinRequestArgs
+	err = makeRemoteCall(&successor, "JoinRequest", altNode.selfExt(), &kvPairs)
+	if err != nil {
+		return ErrJoinFail
+	}
+	fmt.Println("new pairs are:")
+	for i := range kvPairs.Keys {
+		fmt.Println(keyToString(kvPairs.Keys[i]))
+	}
+
+	// Synchronize history with successor
+	altNode.syncFingers(&successor)
 
 	altNode.setPredecessor(nil, "Join()")
-	err = makeRemoteCall(broker, "FindSuccessor", altNode.ID, &altNode.Successor)
-	if err != nil {
-		log.Fatal("Join failed: ", err)
-	}
+
+	// Atomic join
+	altNode.Successor = &successor
 
 	fmt.Println("Joined ring")
 	fmt.Println(altNode.string())
 	return nil
 }
 
+// LeaveRequestArgs holds arguments for a leave request
+type LeaveRequestArgs struct {
+	Keys           []Key
+	Vals           [][]byte
+	DepartureEntry HistEntry
+}
+
 // LeaveRequest handles a leave request. It appends the departure entry to the node's history.
-func (altNode *Alternator) LeaveRequest(entry HistEntry, _ *struct{}) error {
-	altNode.insertToHistory(entry)
-	altNode.Fingers.Remove(entry.Node)
+func (altNode *Alternator) LeaveRequest(args *LeaveRequestArgs, _ *struct{}) error {
+	// Insert received keys
+	batchArgs := BatchPutArgs{metaDataBucket, args.Keys, args.Vals}
+	altNode.BatchPut(batchArgs, &struct{}{})
+	altNode.insertToHistory(args.DepartureEntry)
+	altNode.Fingers.Remove(&args.DepartureEntry.Node)
+	// altNode.setPredecessor(altNode.getNthPredecessor(1), "LeaveRequest()")
+
+	// Replicate in one more
+	err := makeRemoteCall(altNode.getNthSuccessor(N-1), "BatchPut", batchArgs, &struct{}{})
+	checkErr("Unhandled error", err)
 	return nil
 }
 
 // LeaveRing makes the node leave the ring it is in
 func (altNode *Alternator) LeaveRing(_ struct{}, _ *struct{}) error {
+	if (altNode.Successor == nil) || (*altNode.Successor == altNode.selfExt()) {
+		os.Exit(0)
+		return nil
+	}
+	keys, vals := altNode.dbGetRange(altNode.Predecessor.ID, altNode.ID) // Gather entries
 	departureEntry := HistEntry{time.Now(), histLeave, altNode.selfExt()}
-	err := makeRemoteCall(altNode.Fingers.getRandomFinger(), "LeaveRequest", departureEntry, &struct{}{})
-	for err != nil {
-		err = makeRemoteCall(altNode.Fingers.getRandomFinger(), "Leave Request", departureEntry, &struct{}{})
+	args := LeaveRequestArgs{keys, vals, departureEntry}
+
+	var err error
+	// Leave by notifying successor
+	fmt.Println("asking for permission")
+	err = makeRemoteCall(altNode.Successor, "LeaveRequest", &args, &struct{}{})
+	if err != nil {
+		return ErrLeaveFail
 	}
 	os.Exit(0)
 	return nil
@@ -177,8 +228,8 @@ func (altNode *Alternator) FindSuccessor(k Key, ret *ExtNode) error {
 }
 
 // selfExt returns an extNode equivalent of altNode
-func (altNode *Alternator) selfExt() *ExtNode {
-	return &ExtNode{altNode.ID, altNode.Address}
+func (altNode *Alternator) selfExt() ExtNode {
+	return ExtNode{altNode.ID, altNode.Address}
 }
 
 // stabilize fixes the successors periodically
@@ -255,7 +306,7 @@ func (altNode *Alternator) createRing() {
 	// Add own join to ring
 	self := altNode.selfExt()
 	altNode.insertToHistory(HistEntry{time.Now(), histJoin, self})
-	altNode.Fingers.Insert(self)
+	altNode.Fingers.Insert(&self)
 
 	altNode.setSuccessor(&successor, "createRing()")
 }
@@ -272,6 +323,20 @@ func (altNode *Alternator) autoStabilize() {
 	for {
 		altNode.stabilize()
 		time.Sleep(stableTime * time.Millisecond)
+	}
+}
+
+func (altNode *Alternator) sigHandler() {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, os.Kill)
+	for {
+		sig := <-sigChan
+		switch sig {
+		case os.Interrupt:
+			altNode.LeaveRing(struct{}{}, &struct{}{})
+		case os.Kill:
+			os.Exit(1)
+		}
 	}
 }
 
@@ -306,8 +371,9 @@ func InitNode(port string, address string) {
 		node.createRing()
 	}
 	go node.autoCheckPredecessor()
-	go node.autoStabilize()
+	// go node.autoStabilize()
 	go node.autoSyncFingers()
+	go node.sigHandler()
 	fmt.Println("Listening on port " + port)
 	http.Serve(l, nil)
 }

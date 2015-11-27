@@ -53,7 +53,12 @@ func randomKey() Key {
 }
 
 func keyToString(k Key) string {
-	return fmt.Sprintf(keyToXColor(k)+"%x\x1b[0m", k)
+	keyOut := k[0:10]
+	if Config.fullKeys {
+		keyOut = k[:]
+	}
+	// Only first ten characters for simplicity's sake
+	return fmt.Sprintf(keyToXColor(k)+"%x\x1b[0m", keyOut)
 }
 
 // Creates terminal truecolor escape sequence for the given key

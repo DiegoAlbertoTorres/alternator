@@ -3,6 +3,7 @@ package main
 import (
 	"container/list"
 	"fmt"
+	"math/rand"
 	"time"
 )
 
@@ -121,14 +122,17 @@ func (fingers Fingers) String() (str string) {
 // }
 
 func (fingers Fingers) getRandomFinger() *ExtNode {
-	// i := 0
+	i := 0
+	random := rand.Intn(len(fingers.Map))
 	for _, finger := range fingers.Map {
-		// if i == 1 {
-		// 	return getExt(finger)
-		// }
-		// i++
-		return getExt(finger)
+		if i == random {
+			return getExt(finger)
+		}
+		i++
 	}
+	// for _, finger := range fingers.Map {
+	// 	return getExt(finger)
+	// }
 	return nil
 }
 
@@ -138,26 +142,68 @@ func (altNode *Alternator) rebuildFingers() {
 	for _, entry := range altNode.MemberHist {
 		switch entry.Class {
 		case histJoin:
-			newFingers.Insert(entry.Node)
+			var copy ExtNode
+			copy = entry.Node
+			newFingers.Insert(&copy)
 		case histLeave:
-			newFingers.Remove(entry.Node)
+			newFingers.Remove(&entry.Node)
 		}
 	}
 	altNode.Fingers = newFingers
 }
 
+func (altNode *Alternator) refreshSuccessor() {
+	altNode.setSuccessor(altNode.getNthSuccessor(1), "refreshSuccessor()")
+}
+
+func (altNode *Alternator) refreshPredecessor() {
+	altNode.setPredecessor(altNode.getNthPredecessor(1), "refreshPredecessor()")
+}
+
 func (altNode *Alternator) syncFingers(ext *ExtNode) {
 	if changes := altNode.syncMemberHist(ext); changes {
 		altNode.rebuildFingers()
+		altNode.refreshSuccessor()
+		altNode.refreshPredecessor()
 	}
 }
 
 // autoSyncFingers automatically syncs fingers with a random node
 func (altNode *Alternator) autoSyncFingers() {
 	for {
-		altNode.syncFingers(altNode.Fingers.getRandomFinger())
-		// fmt.Println("Fingers are " + altNode.Fingers.String())
+		random := altNode.Fingers.getRandomFinger()
+		altNode.syncFingers(random)
+		// fmt.Println("Fingers are ", altNode.Fingers)
 		// altNode.printHist()
 		time.Sleep(fingerUpdateTime * time.Millisecond)
 	}
+}
+
+func (altNode *Alternator) getNthSuccessor(n int) *ExtNode {
+	// var current *list.Element
+	current := altNode.Fingers.Map[altNode.ID]
+	for i := 0; i < n; i++ {
+		current = current.Next()
+		if current == nil {
+			current = altNode.Fingers.List.Front()
+		}
+	}
+	if current == nil {
+		current = altNode.Fingers.List.Front()
+	}
+	return getExt(current)
+}
+
+func (altNode *Alternator) getNthPredecessor(n int) *ExtNode {
+	current := altNode.Fingers.Map[altNode.ID]
+	for i := 0; i < n; i++ {
+		current = current.Prev()
+		if current == nil {
+			current = altNode.Fingers.List.Back()
+		}
+	}
+	if current == nil {
+		current = altNode.Fingers.List.Back()
+	}
+	return getExt(current)
 }
