@@ -9,8 +9,10 @@ import (
 	k "git/alternator/key"
 	p "git/alternator/peer"
 	"math/rand"
+	"net/rpc"
 	"os/exec"
 	"strconv"
+	"sync"
 	"time"
 
 	// . "git/alternator"
@@ -18,6 +20,8 @@ import (
 
 const term = "konsole"
 const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+var done int
 
 // PutArgs is a struct to represent the arguments of Put or DBPut
 type PutArgs struct {
@@ -66,6 +70,7 @@ func main() {
 		exec.Command("i3-msg", "workspace", "prev").Run()
 	}
 
+	var wg sync.WaitGroup
 	// Randomly generate nEntries, insert them to Alternator
 	for i := 0; i < Config.nEntries; i++ {
 		name := randString(10)
@@ -76,11 +81,19 @@ func main() {
 		args := PutArgs{Name: name, V: v, Replicants: reps, Success: 0}
 		// Insert into own map for later verification
 		verificationMap[name] = v
-		err := altrpc.MakeRemoteCall(&peers[rand.Intn(nPeers)], "Put", &args, &struct{}{})
-		if err != nil {
-			fmt.Println("Put failed!!", err)
-		}
+		call := altrpc.MakeAsyncCall(&peers[rand.Intn(nPeers)], "Put", &args, &struct{}{})
+		wg.Add(1)
+		go func(call *rpc.Call, i int) {
+			defer wg.Done()
+			reply := <-call.Done
+			fmt.Printf("Finished %d\n", i)
+			if reply.Error != nil {
+				fmt.Printf("PUT for %v failed", reply.Args.(PutArgs).Name)
+			}
+		}(call, i)
 	}
+
+	wg.Wait()
 
 	// Now check each entry
 	correct := 0
