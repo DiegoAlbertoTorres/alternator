@@ -1,21 +1,18 @@
 package main
 
 import (
-	"crypto/sha1"
 	"fmt"
-	"io"
 	"log"
-	"math/rand"
 	"net"
 	"net/http"
 	"net/rpc"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"time"
 
 	"git/alternator/altrpc"
+	util "git/alternator/altutil"
 	k "git/alternator/key"
 	m "git/alternator/members"
 	p "git/alternator/peer"
@@ -81,7 +78,7 @@ func (altNode *Alternator) JoinRequest(other *p.Peer, ret *JoinRequestArgs) erro
 	}
 
 	// Add join to history
-	newEntry := m.HistEntry{time.Now(), m.HistJoin, *other}
+	newEntry := m.HistEntry{Time: time.Now(), Class: m.HistJoin, Node: *other}
 	altNode.insertToHistory(newEntry)
 	altNode.Members.Insert(other)
 	fmt.Println("Members changed:", altNode.Members)
@@ -147,7 +144,7 @@ func (altNode *Alternator) LeaveRing(_ struct{}, _ *struct{}) error {
 		return nil
 	}
 	keys, vals := altNode.dbGetRange(altNode.getPredecessor().ID, altNode.ID) // Gather entries
-	departureEntry := m.HistEntry{time.Now(), m.HistLeave, altNode.selfExt()}
+	departureEntry := m.HistEntry{Time: time.Now(), Class: m.HistLeave, Node: altNode.selfExt()}
 	args := LeaveRequestArgs{keys, vals, departureEntry}
 
 	var err error
@@ -235,7 +232,7 @@ func (altNode *Alternator) createRing() {
 	successor.Address = altNode.Address
 	// Add own join to ring
 	self := altNode.selfExt()
-	altNode.insertToHistory(m.HistEntry{time.Now(), m.HistJoin, self})
+	altNode.insertToHistory(m.HistEntry{Time: time.Now(), Class: m.HistJoin, Node: self})
 	altNode.Members.Insert(&self)
 }
 
@@ -385,7 +382,7 @@ func InitNode(port string, address string) {
 	// Initialize Alternator fields
 	node.Address = "127.0.0.1:" + port
 	node.Port = port
-	node.ID = genID(port)
+	node.ID = util.GenID(port)
 	node.Members.Init()
 	node.initDB()
 
@@ -408,12 +405,4 @@ func InitNode(port string, address string) {
 	fmt.Println(node.string())
 	fmt.Println("Listening on port " + port)
 	http.Serve(l, nil)
-}
-
-func genID(port string) k.Key {
-	hostname, _ := os.Hostname()
-	h := sha1.New()
-	rand.Seed(initSeed)
-	io.WriteString(h, hostname+port+strconv.Itoa(rand.Int()))
-	return k.SliceToKey(h.Sum(nil))
 }

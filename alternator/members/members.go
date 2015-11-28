@@ -96,7 +96,7 @@ func (members *Members) Remove(del *p.Peer) {
 func (members Members) String() (str string) {
 	i := 0
 	for e := members.List.Front(); e != nil; e = e.Next() {
-		str += fmt.Sprintf("member %d:\n%s\n", i, GetPeer(e).String())
+		str += fmt.Sprintf("member %d: %s\n", i, GetPeer(e).String())
 		i++
 	}
 	return

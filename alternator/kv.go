@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/gob"
 	"fmt"
 	"git/alternator/altrpc"
 	k "git/alternator/key"
@@ -243,7 +244,7 @@ func (altNode *Alternator) GetMetadata(k k.Key, md *[]byte) error {
 	return altNode.DB.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket(metaDataBucket)
 		*md = b.Get(k[:])
-		fmt.Println("Getting metadata for", k)
+		fmt.Println("Getting meta", k)
 		if md == nil {
 			return ErrKeyNotFound
 		}
@@ -258,7 +259,7 @@ func (altNode *Alternator) GetData(k k.Key, data *[]byte) error {
 	return altNode.DB.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket(dataBucket)
 		*data = b.Get(k[:])
-		fmt.Println("Getting data for ", k)
+		// fmt.Println("Getting data", k)
 		if data == nil {
 			return ErrKeyNotFound
 		}
@@ -280,7 +281,6 @@ func (altNode *Alternator) Get(name string, ret *[]byte) error {
 		if current == nil {
 			current = altNode.Members.List.Front()
 		}
-		fmt.Printf("asking %s\n", m.GetPeer(current).ID)
 		i++
 		err := altrpc.MakeRemoteCall(m.GetPeer(current), "GetMetadata", k, &rawMD)
 		if err == nil {
@@ -334,4 +334,21 @@ func (altNode *Alternator) BatchPut(args BatchPutArgs, _ *struct{}) error {
 		return nil
 	})
 	return err
+}
+
+// bytesToMetadata converts a byte array into a metadata struct
+func bytesToMetadata(data []byte) (md Metadata) {
+	buf := bytes.NewBuffer(data)
+	dec := gob.NewDecoder(buf)
+	dec.Decode(&md)
+	return md
+}
+
+// serialize serializes an object into an array of bytes
+func serialize(obj interface{}) []byte {
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	err := enc.Encode(obj)
+	checkErr("serialization failed", err)
+	return buf.Bytes()
 }
