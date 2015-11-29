@@ -8,7 +8,9 @@ import (
 	k "git/alternator/key"
 	m "git/alternator/members"
 	"log"
+	"net/rpc"
 	"os"
+	"sync"
 
 	p "git/alternator/peer"
 
@@ -169,32 +171,29 @@ func (altNode *Alternator) Put(args *PutArgs, _ *struct{}) error {
 
 	// Store in chain
 	i := 0
-	success := 0
+	mdSuccess := 0
 	mdReplicants := make([]*p.Peer, 0, N)
+	var mdWg sync.WaitGroup
 	for current := altNode.Members.Map[altNode.ID]; i < N; current = current.Next() {
 		if current == nil {
 			current = altNode.Members.List.Front()
 		}
-		err := altrpc.MakeRemoteCall(m.GetPeer(current), "PutMetadata", putMDArgs, &struct{}{})
-		if err != nil {
-			checkErr("metadata put fail", err)
-		} else {
-			success++
-			mdReplicants = append(mdReplicants, m.GetPeer(current))
-		}
+		call := altrpc.MakeAsyncCall(m.GetPeer(current), "PutMetadata", putMDArgs, &struct{}{})
+		mdWg.Add(1)
+		go func(call *rpc.Call) {
+			defer mdWg.Done()
+			reply := <-call.Done
+			if !checkErr("metadata put fail", reply.Error) {
+				mdSuccess++
+			}
+		}(call)
 		i++
 	}
 
-	if !(success > ((N - 1) / 2)) {
-		// Cancel puts
-		altNode.undoPutMD(k, mdReplicants)
-		// Return error
-		return ErrPutMDFail
-	}
-
 	// Put data in replicants
+	var dataWg sync.WaitGroup
 	dataReplicants := make([]*p.Peer, 0, len(args.Replicants))
-	success = 0
+	dataSuccess := 0
 	for _, repID := range args.Replicants {
 		repLNode, ok := altNode.Members.Map[repID]
 		if !ok {
@@ -202,17 +201,31 @@ func (altNode *Alternator) Put(args *PutArgs, _ *struct{}) error {
 			continue
 		}
 		rep := m.GetPeer(repLNode)
-		err = altrpc.MakeRemoteCall(rep, "PutData", args, &struct{}{})
-		if err == nil {
-			dataReplicants = append(dataReplicants, rep)
-			success++
-		} else {
-			log.Print(err)
-		}
+		call := altrpc.MakeAsyncCall(rep, "PutData", args, &struct{}{})
+		dataWg.Add(1)
+		go func(call *rpc.Call) {
+			defer dataWg.Done()
+			reply := <-call.Done
+			if !checkErr("failed to put data in replicant", reply.Error) {
+				dataReplicants = append(dataReplicants, rep)
+				dataSuccess++
+			}
+		}(call)
+	}
+
+	dataWg.Wait()
+	mdWg.Wait()
+
+	if !(mdSuccess > ((N - 1) / 2)) {
+		// Cancel puts
+		altNode.undoPutMD(k, mdReplicants)
+		altNode.undoPutData(k, dataReplicants)
+		// Return error
+		return ErrPutMDFail
 	}
 
 	// Undo if put does not meet success criteria
-	if ((args.Success == 0) && (success != len(args.Replicants))) || (success < args.Success) {
+	if ((args.Success == 0) && (dataSuccess != len(args.Replicants))) || (dataSuccess < args.Success) {
 		altNode.undoPutMD(k, mdReplicants)
 		altNode.undoPutData(k, dataReplicants)
 		return ErrPutFail

@@ -1,0 +1,2 @@
+Benchmarks:
+alternator_test --diego --entries=100  0.21s user 0.04s system 1% cpu 18.508 total
