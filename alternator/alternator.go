@@ -10,14 +10,7 @@ import (
 	"os/signal"
 	"strings"
 	"time"
-
-	"github.com/boltdb/bolt"
 )
-
-// All in milliseconds
-const stableTime = 1000
-const heartbeatTime = 1000
-const heartbeatTimeout = 400
 
 // Alternator is a node in Alternator
 type Alternator struct {
@@ -25,15 +18,25 @@ type Alternator struct {
 	Address    string
 	Port       string
 	Members    Members
-	MemberHist History
-	DB         *bolt.DB
+	MemberHist history
+	DB         *DB
 	Config     Config
 }
 
 // Config stores Alternator's configuration settings
 type Config struct {
-	FullKeys       bool
+	// Whether output uses complete keys or abbreviations
+	FullKeys bool
+	// Time between history syncs with a random peer
 	MemberSyncTime int
+	// Time between heartbeats
+	HeartbeatTime int
+	// Time before a heartbeat times out
+	HeartbeatTimeout int
+	// N is the number of nodes in which metadata is replicated
+	N int
+	// Directory for alternator's data
+	DotPath string
 }
 
 /* Alternator methods */
@@ -45,9 +48,9 @@ type Config struct {
 // }
 
 // func (altNode *Alternator) expelForeignKeys(elem *list.Element) {
-// 	peer := GetPeer(elem)
+// 	peer := getPeer(elem)
 // 	var prevID Key
-// 	if prev := GetPeer(elePrev()); prev != nil {
+// 	if prev := getPeer(elePrev()); prev != nil {
 // 		prevID = prev.ID
 // 	} else {
 // 		prevID = minKey
@@ -72,15 +75,15 @@ type JoinRequestArgs struct {
 // JoinRequest handles a request by another node to join the ring
 func (altNode *Alternator) JoinRequest(other *Peer, ret *JoinRequestArgs) error {
 	// Find pairs in joiner's range
-	keys, vals := altNode.dbGetRange(altNode.ID, other.ID)
+	keys, vals := altNode.DB.getRange(altNode.ID, other.ID)
 	// fmt.Printf("giving pairs in range %s to %s\n", keyToString(altNode.ID), keyToString(other.ID))
 	for i := range keys {
 		fmt.Println(keys[i])
 	}
 
 	// Add join to history
-	newEntry := HistEntry{Time: time.Now(), Class: HistJoin, Node: *other}
-	altNode.insertToHistory(newEntry)
+	newEntry := histEntry{Time: time.Now(), Class: histJoin, Node: *other}
+	altNode.insertTohistory(newEntry)
 	altNode.Members.Insert(other)
 	fmt.Println("Members changed:", altNode.Members)
 	ret.Keys = keys
@@ -118,7 +121,7 @@ func (altNode *Alternator) joinRing(broker *Peer) error {
 type LeaveRequestArgs struct {
 	Keys           []Key
 	Vals           [][]byte
-	DepartureEntry HistEntry
+	DepartureEntry histEntry
 }
 
 // LeaveRequest handles a leave request. It appends the departure entry to the node's history.
@@ -126,13 +129,13 @@ func (altNode *Alternator) LeaveRequest(args *LeaveRequestArgs, _ *struct{}) err
 	// Insert received keys
 	batchArgs := BatchPutArgs{metaDataBucket, args.Keys, args.Vals}
 	altNode.BatchPut(batchArgs, &struct{}{})
-	altNode.insertToHistory(args.DepartureEntry)
+	altNode.insertTohistory(args.DepartureEntry)
 	altNode.Members.Remove(&args.DepartureEntry.Node)
 	fmt.Println("Members changed:", altNode.Members)
 	// altNode.setPredecessor(altNode.getNthPredecessor(1), "LeaveRequest()")
 
 	// Replicate in one more
-	err := MakeRemoteCall(altNode.getNthSuccessor(N-1), "BatchPut", batchArgs, &struct{}{})
+	err := MakeRemoteCall(altNode.getNthSuccessor(altNode.Config.N-1), "BatchPut", batchArgs, &struct{}{})
 	checkErr("Unhandled error", err)
 	return nil
 }
@@ -144,8 +147,8 @@ func (altNode *Alternator) LeaveRing(_ struct{}, _ *struct{}) error {
 		os.Exit(0)
 		return nil
 	}
-	keys, vals := altNode.dbGetRange(altNode.getPredecessor().ID, altNode.ID) // Gather entries
-	departureEntry := HistEntry{Time: time.Now(), Class: HistLeave, Node: altNode.selfExt()}
+	keys, vals := altNode.DB.getRange(altNode.getPredecessor().ID, altNode.ID) // Gather entries
+	departureEntry := histEntry{Time: time.Now(), Class: histLeave, Node: altNode.selfExt()}
 	args := LeaveRequestArgs{keys, vals, departureEntry}
 
 	var err error
@@ -154,6 +157,7 @@ func (altNode *Alternator) LeaveRing(_ struct{}, _ *struct{}) error {
 	if err != nil {
 		return ErrLeaveFail
 	}
+	altNode.DB.close()
 	os.Exit(0)
 	return nil
 }
@@ -177,7 +181,7 @@ func (altNode Alternator) string() (str string) {
 // FindSuccessor finds the successor of a key in the ring
 func (altNode *Alternator) FindSuccessor(k Key, ret *Peer) error {
 	succ, err := altNode.Members.FindSuccessor(k)
-	*ret = *GetPeer(succ)
+	*ret = *getPeer(succ)
 	return err
 }
 
@@ -196,7 +200,7 @@ func (altNode *Alternator) Heartbeat(_ struct{}, ret *string) error {
 // checkPredecessor checks if the predecessor has failed
 func (altNode *Alternator) checkPredecessor() {
 	predecessor := altNode.getPredecessor()
-	if Compare(predecessor.ID, altNode.ID) == 0 {
+	if predecessor.ID.Compare(altNode.ID) == 0 {
 		return
 	}
 	// Ping
@@ -217,7 +221,7 @@ func (altNode *Alternator) checkPredecessor() {
 			// altNode.setPredecessor(nil, "checkPredecessor()")
 		}
 		// Call timed out
-	case <-time.After(heartbeatTimeout * time.Millisecond):
+	case <-time.After(time.Duration(altNode.Config.HeartbeatTimeout) * time.Millisecond):
 		fmt.Println("Predecessor stopped responding, ceasing connection")
 		// Kill connection
 		Close(predecessor)
@@ -233,7 +237,7 @@ func (altNode *Alternator) createRing() {
 	successor.Address = altNode.Address
 	// Add own join to ring
 	self := altNode.selfExt()
-	altNode.insertToHistory(HistEntry{Time: time.Now(), Class: HistJoin, Node: self})
+	altNode.insertTohistory(histEntry{Time: time.Now(), Class: histJoin, Node: self})
 	altNode.Members.Insert(&self)
 }
 
@@ -242,11 +246,11 @@ func (altNode *Alternator) rebuildMembers() {
 	newMembers.Init()
 	for _, entry := range altNode.MemberHist {
 		switch entry.Class {
-		case HistJoin:
+		case histJoin:
 			var copy Peer
 			copy = entry.Node
 			newMembers.Insert(&copy)
-		case HistLeave:
+		case histLeave:
 			newMembers.Remove(&entry.Node)
 		}
 	}
@@ -264,7 +268,7 @@ func (altNode *Alternator) syncMembers(peer *Peer) {
 // autoSyncMembers automatically syncs members with a random node
 func (altNode *Alternator) autoSyncMembers() {
 	for {
-		random := altNode.Members.GetRandomMember()
+		random := altNode.Members.GetRandom()
 		altNode.syncMembers(random)
 		// altNode.printHist()
 		time.Sleep(time.Duration(altNode.Config.MemberSyncTime) * time.Millisecond)
@@ -277,7 +281,7 @@ func (altNode *Alternator) getSuccessor() *Peer {
 	if succElt == nil {
 		succElt = altNode.Members.List.Front()
 	}
-	return GetPeer(succElt)
+	return getPeer(succElt)
 }
 
 func (altNode *Alternator) getPredecessor() *Peer {
@@ -286,7 +290,7 @@ func (altNode *Alternator) getPredecessor() *Peer {
 	if predElt == nil {
 		predElt = altNode.Members.List.Back()
 	}
-	return GetPeer(predElt)
+	return getPeer(predElt)
 }
 
 func (altNode *Alternator) getNthSuccessor(n int) *Peer {
@@ -301,7 +305,7 @@ func (altNode *Alternator) getNthSuccessor(n int) *Peer {
 	if current == nil {
 		current = altNode.Members.List.Front()
 	}
-	return GetPeer(current)
+	return getPeer(current)
 }
 
 func (altNode *Alternator) getNthPredecessor(n int) *Peer {
@@ -315,18 +319,18 @@ func (altNode *Alternator) getNthPredecessor(n int) *Peer {
 	if current == nil {
 		current = altNode.Members.List.Back()
 	}
-	return GetPeer(current)
+	return getPeer(current)
 }
 
 func (altNode *Alternator) autoCheckPredecessor() {
 	for {
 		altNode.checkPredecessor()
-		time.Sleep(heartbeatTime * time.Millisecond)
+		time.Sleep(time.Duration(altNode.Config.HeartbeatTime) * time.Millisecond)
 	}
 }
 
 // GetMemberHist returns the node's membership history
-func (altNode *Alternator) GetMemberHist(_ struct{}, ret *[]HistEntry) error {
+func (altNode *Alternator) GetMemberHist(_ struct{}, ret *[]histEntry) error {
 	*ret = altNode.MemberHist
 	return nil
 }
@@ -336,7 +340,7 @@ func (altNode *Alternator) syncMemberHist(peer *Peer) bool {
 	if peer == nil {
 		return false
 	}
-	var peerHist History
+	var peerHist history
 
 	err := MakeRemoteCall(peer, "GetMemberHist", struct{}{}, &peerHist)
 	// fmt.Printf("Comparing members with %v\n", peer)
@@ -346,13 +350,13 @@ func (altNode *Alternator) syncMemberHist(peer *Peer) bool {
 	}
 
 	var changes bool
-	altNode.MemberHist, changes = MergeHistories(altNode.MemberHist, peerHist)
+	altNode.MemberHist, changes = mergeHistories(altNode.MemberHist, peerHist)
 	// fmt.Printf("my new history is %v\n", altNode.MemberHist)
 	return changes
 }
 
-func (altNode *Alternator) insertToHistory(entry HistEntry) {
-	altNode.MemberHist = InsertEntry(altNode.MemberHist, entry)
+func (altNode *Alternator) insertTohistory(entry histEntry) {
+	altNode.MemberHist.InsertEntry(entry)
 }
 
 func (altNode *Alternator) sigHandler() {
@@ -384,6 +388,7 @@ func InitNode(conf Config, port string, address string) {
 	node.Address = "127.0.0.1:" + port
 	node.Port = port
 	node.ID = GenID(port)
+	node.Config = conf
 	node.Members.Init()
 	node.initDB()
 

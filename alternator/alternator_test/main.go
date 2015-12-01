@@ -18,14 +18,6 @@ const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 var done int
 
-// PutArgs is a struct to represent the arguments of Put or DBPut
-type PutArgs struct {
-	Name       string
-	V          []byte
-	Replicants []alt.Key
-	Success    int
-}
-
 // Config stores configuration options globally
 var Config struct {
 	diego    bool
@@ -89,7 +81,7 @@ func main() {
 			reply := <-call.Done
 			// fmt.Printf("Finished %d\n", i)
 			if reply.Error != nil {
-				fmt.Printf("PUT for %v failed\n", reply.Args.(*PutArgs).Name)
+				fmt.Printf("PUT for %v failed\n", reply.Args.(*alt.PutArgs).Name)
 			}
 		}(call, i)
 	}

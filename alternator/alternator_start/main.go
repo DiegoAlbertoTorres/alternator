@@ -25,6 +25,10 @@ func main() {
 	flag.StringVar(&command, "command", "", "name of command.")
 	flag.StringVar(&joinPort, "join", "0", "joins the ring that the node at [address]:[port] belongs to.")
 	flag.IntVar(&config.MemberSyncTime, "memberSyncTime", 400, "sets the time between membership syncs with a random node.")
+	flag.IntVar(&config.HeartbeatTime, "heartbeatTime", 1000, "sets the amount of time between timeouts.")
+	flag.IntVar(&config.HeartbeatTimeout, "heartbeatTimeout", 400, "sets the amount of time before a heartbeat timesout.")
+	flag.IntVar(&config.N, "n", 2, "sets the amount of nodes that replicate metadata.")
+	flag.StringVar(&config.DotPath, "dotPath", os.Getenv("HOME")+"/.alternator/", "sets the directory for alternator's data.")
 	flag.BoolVar(&config.FullKeys, "fullKeys", false, "if true all keys (hashes) are printed completely.")
 	flag.Parse()
 
@@ -34,7 +38,7 @@ func main() {
 		checkErr("dialing:", err)
 		switch command {
 		case "FindSuccessor":
-			key := alternator.Random()
+			key := alternator.RandomKey()
 			fmt.Println("Finding successor of ", key)
 			var reply alternator.Peer
 			err = client.Call("Alternator."+command, key, &reply)

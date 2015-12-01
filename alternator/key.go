@@ -32,8 +32,8 @@ func init() {
 }
 
 // Compare compares two keys, behaves just like bytes.Compare
-func Compare(a, b Key) int {
-	return bytes.Compare(a[:], b[:])
+func (k Key) Compare(other Key) int {
+	return bytes.Compare(k[:], other[:])
 }
 
 // SliceToKey converts a slice to a key (an alias for an array)
@@ -43,15 +43,15 @@ func SliceToKey(src []byte) (dst Key) {
 	return
 }
 
-// InRange checks if test is in the key range [from, to]
-func InRange(test, from, to Key) bool {
-	if Compare(from, to) < 0 {
-		return (Compare(test, from) > 0) && (Compare(test, to) < 0)
-	} else if Compare(from, to) > 0 {
-		return ((Compare(test, from) > 0) && (Compare(test, MaxKey) <= 0)) ||
-			((Compare(test, to) < 0) && (Compare(test, MinKey) >= 0))
+// inRange checks if test is in the key range [from, to]
+func inRange(test, from, to Key) bool {
+	if from.Compare(to) < 0 {
+		return (test.Compare(from) > 0) && (test.Compare(to) < 0)
+	} else if from.Compare(to) > 0 {
+		return ((test.Compare(from) > 0) && (test.Compare(MaxKey) <= 0)) ||
+			((test.Compare(to) < 0) && (test.Compare(MinKey) >= 0))
 	} else {
-		return (Compare(test, from) != 0)
+		return (test.Compare(from) != 0)
 	}
 }
 
@@ -62,8 +62,8 @@ func StringToKey(str string) Key {
 	return SliceToKey(h.Sum(nil))
 }
 
-// Random returns a random key
-func Random() Key {
+// RandomKey returns a random key
+func RandomKey() Key {
 	h := sha1.New()
 	rand.Seed(time.Now().UnixNano())
 	io.WriteString(h, strconv.Itoa(rand.Int()))

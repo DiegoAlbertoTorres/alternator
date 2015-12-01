@@ -19,8 +19,8 @@ func (members *Members) Init() {
 	// altNode.Members.Add(&selfExt)
 }
 
-// GetPeer gets a peer from an element of Members.List
-func GetPeer(e *list.Element) *Peer {
+// getPeer gets a peer from an element of Members.List
+func getPeer(e *list.Element) *Peer {
 	if e != nil {
 		return e.Value.(*Peer)
 	}
@@ -39,7 +39,7 @@ func GetPeer(e *list.Element) *Peer {
 func (members *Members) FindSuccessor(key Key) (*list.Element, error) {
 	// Find ID of successor
 	for e := members.List.Front(); e != nil; e = e.Next() {
-		if Compare(GetPeer(e).ID, key) > 0 {
+		if getPeer(e).ID.Compare(key) > 0 {
 			return e, nil
 		}
 	}
@@ -55,17 +55,17 @@ func (members *Members) Insert(peer *Peer) *list.Element {
 		if e == nil {
 			break
 		}
-		current := GetPeer(e)
+		current := getPeer(e)
 		var prevID Key
 		if prev := e.Prev(); prev != nil {
-			prevID = GetPeer(prev).ID
+			prevID = getPeer(prev).ID
 		} else {
 			prevID = MinKey
 		}
 		// Already in Members
-		if Compare(peer.ID, current.ID) == 0 {
+		if peer.ID.Compare(current.ID) == 0 {
 			return nil
-		} else if (Compare(peer.ID, prevID) > 0) && (Compare(peer.ID, current.ID) < 0) {
+		} else if (peer.ID.Compare(prevID) > 0) && (peer.ID.Compare(current.ID) < 0) {
 			// Correct spot to add, add to list, slice and map
 			// members.sliceInsert(peer, i)
 			e := members.List.InsertBefore(peer, e)
@@ -84,7 +84,7 @@ func (members *Members) Insert(peer *Peer) *list.Element {
 // Remove deletes a node from members
 func (members *Members) Remove(del *Peer) {
 	for e := members.List.Front(); e != nil; e = e.Next() {
-		if GetPeer(e).ID == del.ID {
+		if getPeer(e).ID == del.ID {
 			members.List.Remove(e)
 			delete(members.Map, del.ID)
 		}
@@ -94,7 +94,7 @@ func (members *Members) Remove(del *Peer) {
 func (members Members) String() (str string) {
 	i := 0
 	for e := members.List.Front(); e != nil; e = e.Next() {
-		str += fmt.Sprintf("member %d: %s\n", i, GetPeer(e).String())
+		str += fmt.Sprintf("member %d: %s\n", i, getPeer(e).String())
 		i++
 	}
 	return
@@ -118,18 +118,18 @@ func (members Members) String() (str string) {
 // 	}
 // }
 
-// GetRandomMember returns a random member from the ring
-func (members Members) GetRandomMember() *Peer {
+// GetRandom returns a random member from the ring
+func (members Members) GetRandom() *Peer {
 	// i := 0
 	// random := rand.Intn(len(members.Map))
 	// for _, member := range members.Map {
 	// 	if i == random {
-	// 		return GetPeer(member)
+	// 		return getPeer(member)
 	// 	}
 	// 	i++
 	// }
 	for _, member := range members.Map {
-		return GetPeer(member)
+		return getPeer(member)
 	}
 	return nil
 }

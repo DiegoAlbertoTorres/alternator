@@ -7,11 +7,6 @@ import (
 	"os"
 )
 
-const (
-	// ErrNilPredecessor specifies a nil predecessor error
-	ErrNilPredecessor = "nil predecessor"
-)
-
 var (
 	// ErrKeyNotFound occurs when a Get was made for an unexisting key
 	ErrKeyNotFound = errors.New("key not found")

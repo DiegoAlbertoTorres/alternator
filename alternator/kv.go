@@ -12,13 +12,13 @@ import (
 	"github.com/boltdb/bolt"
 )
 
-// N is the number of nodes in which metadata is replicated
-const N = 2
-
 var dataBucket = []byte("data")
 var metaDataBucket = []byte("metadata")
 
-var dotPath = os.Getenv("HOME") + "/.alternator/"
+// DB is a wrapper around bolt's DB struct, so that methods can be added
+type DB struct {
+	*bolt.DB
+}
 
 // PutArgs is a struct to represent the arguments of Put or DBPut
 type PutArgs struct {
@@ -35,9 +35,10 @@ type BatchInsertArgs struct {
 }
 
 func (altNode *Alternator) initDB() {
-	err := os.MkdirAll(dotPath, 0777)
+	err := os.MkdirAll(altNode.Config.DotPath, 0777)
 	checkFatal("failed to make db path", err)
-	altNode.DB, err = bolt.Open(dotPath+altNode.Port+".db", 0600, nil)
+	boltdb, err := bolt.Open(altNode.Config.DotPath+altNode.Port+".db", 0600, nil)
+	altNode.DB = &DB{boltdb}
 	if !checkFatal("failed to open .db file", err) {
 		// Create a bucket for all entries
 		altNode.DB.Update(func(tx *bolt.Tx) error {
@@ -59,12 +60,12 @@ func (altNode *Alternator) initDB() {
 	}
 }
 
-// dbGetRange returns all keys and values in a given range
-func (altNode *Alternator) dbGetRange(min, max Key) ([]Key, [][]byte) {
+// GetRange returns all keys and values in a given range
+func (db *DB) getRange(min, max Key) ([]Key, [][]byte) {
 	var keys []Key
 	var vals [][]byte
 
-	err := altNode.DB.View(func(tx *bolt.Tx) error {
+	err := db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket(metaDataBucket)
 		c := b.Cursor()
 
@@ -83,8 +84,9 @@ func (altNode *Alternator) dbGetRange(min, max Key) ([]Key, [][]byte) {
 	return keys, vals
 }
 
-func (altNode *Alternator) closeDB() {
-	altNode.DB.Close()
+// close closes the db
+func (db *DB) close() {
+	db.Close()
 }
 
 // PutData puts the (hash(name), val) pair in DB
@@ -167,13 +169,13 @@ func (altNode *Alternator) Put(args *PutArgs, _ *struct{}) error {
 	// Store in chain
 	i := 0
 	mdSuccess := 0
-	mdReplicants := make([]*Peer, 0, N)
+	mdReplicants := make([]*Peer, 0, altNode.Config.N)
 	var mdWg sync.WaitGroup
-	for current := altNode.Members.Map[altNode.ID]; i < N; current = current.Next() {
+	for current := altNode.Members.Map[altNode.ID]; i < altNode.Config.N; current = current.Next() {
 		if current == nil {
 			current = altNode.Members.List.Front()
 		}
-		call := MakeAsyncCall(GetPeer(current), "PutMetadata", putMDArgs, &struct{}{})
+		call := MakeAsyncCall(getPeer(current), "PutMetadata", putMDArgs, &struct{}{})
 		mdWg.Add(1)
 		go func(call *rpc.Call) {
 			defer mdWg.Done()
@@ -195,7 +197,7 @@ func (altNode *Alternator) Put(args *PutArgs, _ *struct{}) error {
 			log.Print("Members map wrong error")
 			continue
 		}
-		rep := GetPeer(repLNode)
+		rep := getPeer(repLNode)
 		call := MakeAsyncCall(rep, "PutData", args, &struct{}{})
 		dataWg.Add(1)
 		go func(call *rpc.Call) {
@@ -211,7 +213,7 @@ func (altNode *Alternator) Put(args *PutArgs, _ *struct{}) error {
 	dataWg.Wait()
 	mdWg.Wait()
 
-	if !(mdSuccess > ((N - 1) / 2)) {
+	if !(mdSuccess > ((altNode.Config.N - 1) / 2)) {
 		// Cancel puts
 		altNode.undoPutMD(k, mdReplicants)
 		altNode.undoPutData(k, dataReplicants)
@@ -285,12 +287,12 @@ func (altNode *Alternator) Get(name string, ret *[]byte) error {
 	var successor Peer
 	altNode.FindSuccessor(k, &successor)
 	i := 0
-	for current := altNode.Members.Map[successor.ID]; i < N; current = current.Next() {
+	for current := altNode.Members.Map[successor.ID]; i < altNode.Config.N; current = current.Next() {
 		if current == nil {
 			current = altNode.Members.List.Front()
 		}
 		i++
-		err := MakeRemoteCall(GetPeer(current), "GetMetadata", k, &rawMD)
+		err := MakeRemoteCall(getPeer(current), "GetMetadata", k, &rawMD)
 		if err == nil {
 			break
 		}
@@ -299,7 +301,7 @@ func (altNode *Alternator) Get(name string, ret *[]byte) error {
 
 	// Get data from some replicant
 	for _, repID := range md.Replicants {
-		rep := GetPeer(altNode.Members.Map[repID])
+		rep := getPeer(altNode.Members.Map[repID])
 		// In case rep left
 		// TODO: this occurs because when replicants leave, nobody re-replicates their data
 		if rep == nil {

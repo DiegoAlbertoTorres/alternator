@@ -5,11 +5,11 @@ import (
 	"time"
 )
 
-// History represents a membership history
-type History []HistEntry
+// history represents a membership history
+type history []histEntry
 
-// HistEntry is an entry in the membership history
-type HistEntry struct {
+// histEntry is an entry in the membership history
+type histEntry struct {
 	Time  time.Time
 	Class int
 	Node  Peer
@@ -17,23 +17,23 @@ type HistEntry struct {
 
 // Entry classes
 const (
-	HistJoin = iota
-	HistLeave
+	histJoin = iota
+	histLeave
 )
 
-// String gives a string representation of a HistEntry
-func (entry HistEntry) String() string {
+// String gives a string representation of a histEntry
+func (entry histEntry) String() string {
 	var class string
 	switch entry.Class {
-	case HistJoin:
+	case histJoin:
 		class = "join"
-	case HistLeave:
+	case histLeave:
 		class = "leave"
 	}
 	return fmt.Sprintf("%v: %s, %v\n", entry.Time, class, entry.Node)
 }
 
-func compareEntries(a HistEntry, b HistEntry) bool {
+func compareEntries(a histEntry, b histEntry) bool {
 	if (a.Time.After(b.Time.Add(-1 * time.Second))) && (a.Time.Before(b.Time.Add(1 * time.Second))) {
 		if (a.Class == b.Class) && (a.Node == b.Node) {
 			return true
@@ -42,33 +42,34 @@ func compareEntries(a HistEntry, b HistEntry) bool {
 	return false
 }
 
-func (hist History) String() {
+func (hist history) String() {
 	for _, entry := range hist {
 		fmt.Println(entry.String())
 	}
 }
 
 // InsertEntry returns an entry to hist, returning the new history
-func InsertEntry(hist History, entry HistEntry) History {
+func (hist *history) InsertEntry(entry histEntry) {
+	histSlice := *hist
 	i := 0
 	// Find correct position for entry (sorted chronologically)
-	for i = range hist {
-		if entry.Time.Before(hist[i].Time) {
-			hist = append(hist, HistEntry{})
-			copy(hist[i+1:], hist[i:])
-			hist[i] = entry
-			return hist
+	for i = range histSlice {
+		if entry.Time.Before(histSlice[i].Time) {
+			histSlice = append(histSlice, histEntry{})
+			copy(histSlice[i+1:], histSlice[i:])
+			histSlice[i] = entry
+			*hist = histSlice
 		}
 	}
 	// Add at end if needed
-	hist = append(hist, entry)
-	return hist
+	histSlice = append(histSlice, entry)
+	*hist = histSlice
 }
 
-// MergeHistories merges two histories, returning one with all entries. Second return value is
+// mergeHistories merges two histories, returning one with all entries. Second return value is
 // true iff a and b are different.
-func MergeHistories(a, b History) (History, bool) {
-	findInA := func(entry HistEntry) bool {
+func mergeHistories(a, b history) (history, bool) {
+	findInA := func(entry histEntry) bool {
 		for i := range a {
 			if compareEntries(entry, a[i]) {
 				return true
@@ -80,7 +81,7 @@ func MergeHistories(a, b History) (History, bool) {
 	// Merge b into a
 	for i := range b {
 		if !findInA(b[i]) {
-			a = InsertEntry(a, b[i])
+			a.InsertEntry(b[i])
 			changes = true
 		}
 	}
