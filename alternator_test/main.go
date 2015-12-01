@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	alt "git/alternator"
 	"math/rand"
 	"net/rpc"
 	"os/exec"
 	"strconv"
 	"sync"
 	"time"
+
+	alt "github.com/DiegoAlbertoTorres/alternator"
 )
 
 const term = "konsole"

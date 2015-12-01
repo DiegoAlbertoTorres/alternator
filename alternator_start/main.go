@@ -4,10 +4,11 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
-	"git/alternator"
 	"log"
 	"net/rpc"
 	"os"
+
+	"github.com/DiegoAlbertoTorres/alternator"
 )
 
 var config alternator.Config
