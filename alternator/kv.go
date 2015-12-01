@@ -318,7 +318,7 @@ func (altNode *Alternator) Get(name string, ret *[]byte) error {
 		}
 	}
 	// None of the replicants had the data?
-	return ErrDataLost
+	return altrpc.ErrDataLost
 }
 
 // BatchPutArgs are the arguments for a batch put

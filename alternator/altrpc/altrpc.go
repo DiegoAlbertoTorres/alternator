@@ -1,6 +1,7 @@
 package altrpc
 
 import (
+	"errors"
 	"fmt"
 	p "git/alternator/peer"
 	"log"
@@ -14,6 +15,9 @@ func init() {
 	// Init connection map
 	ClientMap = make(map[string]*rpc.Client)
 }
+
+// ErrDataLost occurs when metadata for a name was found, but not its data
+var ErrDataLost = errors.New("data lost")
 
 // MakeRemoteCall calls a function at a remote peer synchronously
 func MakeRemoteCall(callee *p.Peer, call string, args interface{}, result interface{}) error {

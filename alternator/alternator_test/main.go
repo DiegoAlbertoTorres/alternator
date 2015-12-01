@@ -14,8 +14,6 @@ import (
 	"strconv"
 	"sync"
 	"time"
-
-	// . "git/alternator"
 )
 
 const term = "konsole"
@@ -42,25 +40,29 @@ func main() {
 	flag.IntVar(&Config.nEntries, "entries", 100, "number of entries to be inserted")
 	flag.Parse()
 
-	rand.Seed(time.Now().UTC().UnixNano())
-
 	ports := []int{38650, 34001, 50392, 43960, 56083, 54487, 56043, 33846}
 	// ports := []int{38650, 50392, 56083, 56043}
 	nPeers := len(ports)
 	ids := makeIDs(ports)
 	peers := makePeers(ports)
+	var cmds []*exec.Cmd
 
 	verificationMap := make(map[string][]byte, Config.nEntries)
+	rand.Seed(time.Now().UTC().UnixNano())
 
 	if Config.diego {
 		exec.Command("i3-msg", "workspace", "next").Run()
 	}
 	// Start first
-	exec.Command(term, "-e", "alternator", "--port="+strconv.Itoa(ports[0])).Run()
+	cmd := exec.Command(term, "-e", "alternator", "--port="+strconv.Itoa(ports[0]))
+	cmds = append(cmds, cmd)
+	cmd.Start()
 
 	// Launch other nodes
 	for _, port := range ports[1:] {
-		exec.Command(term, "-e", "alternator", "--join="+strconv.Itoa(ports[0]), "--port="+strconv.Itoa(port)).Run()
+		cmd = exec.Command(term, "-e", "alternator", "--join="+strconv.Itoa(ports[0]), "--port="+strconv.Itoa(port))
+		cmds = append(cmds, cmd)
+		cmd.Start()
 		time.Sleep(200 * time.Millisecond)
 	}
 
@@ -86,7 +88,7 @@ func main() {
 		go func(call *rpc.Call, i int) {
 			defer wg.Done()
 			reply := <-call.Done
-			fmt.Printf("Finished %d\n", i)
+			// fmt.Printf("Finished %d\n", i)
 			if reply.Error != nil {
 				fmt.Printf("PUT for %v failed\n", reply.Args.(*PutArgs).Name)
 			}
@@ -95,13 +97,30 @@ func main() {
 
 	wg.Wait()
 
+	// Kill some processes
+	// fmt.Printf("There are %d cmds\n", len(cmds))
+	// cmds = randomCmds(cmds)
+	// fmt.Printf("There are %d random cmds\n", len(cmds))
+	// for _, cmd := range cmds {
+	// 	fmt.Println("killing someone")
+	// 	cmd.Process.Signal(os.Interrupt)
+	// 	// cmd.Process.Kill()
+	// }
+
+	fmt.Println("kill some stuff!")
+	time.Sleep(5 * time.Second)
+
 	// Now check each entry
 	correct := 0
 	for name, v := range verificationMap {
 		var result []byte
-		err := altrpc.MakeRemoteCall(&peers[rand.Intn(nPeers)], "Get", name, &result)
-		if err != nil {
-			fmt.Println("Get failed!!")
+		for {
+			err := altrpc.MakeRemoteCall(&peers[rand.Intn(nPeers)], "Get", name, &result)
+			if err == nil || err.Error() == altrpc.ErrDataLost.Error() {
+				break
+			} else {
+				fmt.Println("rofl", err)
+			}
 		}
 		if bytes.Compare(v, result) == 0 {
 			correct++
@@ -139,6 +158,7 @@ func makePeers(ports []int) []p.Peer {
 }
 
 func randomIDs(ids []k.Key) []k.Key {
+	// rand.Seed(time.Now().UTC().UnixNano())
 	n := rand.Intn(len(ids)-1) + 1
 
 	for i := len(ids) - 1; i > 0; i-- {
@@ -146,4 +166,15 @@ func randomIDs(ids []k.Key) []k.Key {
 		ids[i], ids[j] = ids[j], ids[i]
 	}
 	return ids[0:n]
+}
+
+func randomCmds(cmds []*exec.Cmd) []*exec.Cmd {
+	// rand.Seed(time.Now().UTC().UnixNano())
+	n := rand.Intn(len(cmds)-1) + 1
+
+	for i := len(cmds) - 1; i > 0; i-- {
+		j := rand.Intn(i)
+		cmds[i], cmds[j] = cmds[j], cmds[i]
+	}
+	return cmds[0:n]
 }
