@@ -4,10 +4,7 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	"git/alternator/altrpc"
-	"git/alternator/altutil"
-	k "git/alternator/key"
-	p "git/alternator/peer"
+	alt "git/alternator"
 	"math/rand"
 	"net/rpc"
 	"os/exec"
@@ -25,7 +22,7 @@ var done int
 type PutArgs struct {
 	Name       string
 	V          []byte
-	Replicants []k.Key
+	Replicants []alt.Key
 	Success    int
 }
 
@@ -34,6 +31,8 @@ var Config struct {
 	diego    bool
 	nEntries int
 }
+
+var altCmd = "alternator_start"
 
 func main() {
 	flag.BoolVar(&Config.diego, "diego", false, "assumes diego's linux environment, which has nice properties ;)")
@@ -54,13 +53,13 @@ func main() {
 		exec.Command("i3-msg", "workspace", "next").Run()
 	}
 	// Start first
-	cmd := exec.Command(term, "-e", "alternator", "--port="+strconv.Itoa(ports[0]))
+	cmd := exec.Command(term, "-e", altCmd, "--port="+strconv.Itoa(ports[0]))
 	cmds = append(cmds, cmd)
 	cmd.Start()
 
 	// Launch other nodes
 	for _, port := range ports[1:] {
-		cmd = exec.Command(term, "-e", "alternator", "--join="+strconv.Itoa(ports[0]), "--port="+strconv.Itoa(port))
+		cmd = exec.Command(term, "-e", altCmd, "--join="+strconv.Itoa(ports[0]), "--port="+strconv.Itoa(port))
 		cmds = append(cmds, cmd)
 		cmd.Start()
 		time.Sleep(200 * time.Millisecond)
@@ -80,10 +79,10 @@ func main() {
 		reps := randomIDs(ids)
 		fmt.Printf("PUT %v, w/e in %v\n", name, reps)
 		// Insert it into Alternator
-		args := PutArgs{Name: name, V: v, Replicants: reps, Success: 0}
+		args := alt.PutArgs{Name: name, V: v, Replicants: reps, Success: 0}
 		// Insert into own map for later verification
 		verificationMap[name] = v
-		call := altrpc.MakeAsyncCall(&peers[rand.Intn(nPeers)], "Put", &args, &struct{}{})
+		call := alt.MakeAsyncCall(&peers[rand.Intn(nPeers)], "Put", &args, &struct{}{})
 		wg.Add(1)
 		go func(call *rpc.Call, i int) {
 			defer wg.Done()
@@ -115,8 +114,8 @@ func main() {
 	for name, v := range verificationMap {
 		var result []byte
 		for {
-			err := altrpc.MakeRemoteCall(&peers[rand.Intn(nPeers)], "Get", name, &result)
-			if err == nil || err.Error() == altrpc.ErrDataLost.Error() {
+			err := alt.MakeRemoteCall(&peers[rand.Intn(nPeers)], "Get", name, &result)
+			if err == nil || err.Error() == alt.ErrDataLost.Error() {
 				break
 			} else {
 				fmt.Println("rofl", err)
@@ -140,24 +139,24 @@ func randString(n int) string {
 	return string(b)
 }
 
-func makeIDs(ports []int) []k.Key {
-	var ids []k.Key
+func makeIDs(ports []int) []alt.Key {
+	var ids []alt.Key
 	for i := range ports {
-		ids = append(ids, altutil.GenID(strconv.Itoa(ports[i])))
+		ids = append(ids, alt.GenID(strconv.Itoa(ports[i])))
 	}
 	return ids
 }
 
-func makePeers(ports []int) []p.Peer {
-	var peers []p.Peer
+func makePeers(ports []int) []alt.Peer {
+	var peers []alt.Peer
 	for i := range ports {
-		peer := p.Peer{ID: altutil.GenID(strconv.Itoa(ports[i])), Address: "127.0.0.1:" + strconv.Itoa(ports[i])}
+		peer := alt.Peer{ID: alt.GenID(strconv.Itoa(ports[i])), Address: "127.0.0.1:" + strconv.Itoa(ports[i])}
 		peers = append(peers, peer)
 	}
 	return peers
 }
 
-func randomIDs(ids []k.Key) []k.Key {
+func randomIDs(ids []alt.Key) []alt.Key {
 	// rand.Seed(time.Now().UTC().UnixNano())
 	n := rand.Intn(len(ids)-1) + 1
 

@@ -1,9 +1,7 @@
-package altrpc
+package alternator
 
 import (
-	"errors"
 	"fmt"
-	p "git/alternator/peer"
 	"log"
 	"net/rpc"
 )
@@ -16,11 +14,8 @@ func init() {
 	ClientMap = make(map[string]*rpc.Client)
 }
 
-// ErrDataLost occurs when metadata for a name was found, but not its data
-var ErrDataLost = errors.New("data lost")
-
 // MakeRemoteCall calls a function at a remote peer synchronously
-func MakeRemoteCall(callee *p.Peer, call string, args interface{}, result interface{}) error {
+func MakeRemoteCall(callee *Peer, call string, args interface{}, result interface{}) error {
 	// Check if there is already a connection
 	var client *rpc.Client
 	var clientOpen bool
@@ -46,7 +41,7 @@ func MakeRemoteCall(callee *p.Peer, call string, args interface{}, result interf
 }
 
 // MakeAsyncCall calls a function at a remote peer asynchronously
-func MakeAsyncCall(callee *p.Peer, call string, args interface{}, result interface{}) *rpc.Call {
+func MakeAsyncCall(callee *Peer, call string, args interface{}, result interface{}) *rpc.Call {
 	// Check if there is already a connection
 	var client *rpc.Client
 	var clientOpen bool
@@ -68,7 +63,7 @@ func MakeAsyncCall(callee *p.Peer, call string, args interface{}, result interfa
 }
 
 // Close closes and RPC connection
-func Close(node *p.Peer) {
+func Close(node *Peer) {
 	if node == nil {
 		return
 	}

@@ -11,8 +11,8 @@ successor of the hash of the key (the pair's name).
 
 * Each node keeps a full membership list of the ring.
 
-* The membership list is maintained by keeping a history of changes in the ring's membership. These
-changes are propagated using a simple gossip algorithm.
+* The membership list is maintained by keeping a history of changes in the ring's membershi These
+changes are propagated using a simple gossip algorith
 
 * The coordinator of a pair stores its metadata. This includes the ID of the nodes that are in
 charge of replicating the key's corresponding value. The coordinator does not store the value

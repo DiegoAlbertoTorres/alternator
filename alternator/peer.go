@@ -1,12 +1,8 @@
-package peer
-
-import (
-	k "git/alternator/key"
-)
+package alternator
 
 // Peer is an peerernal, non-local node
 type Peer struct {
-	ID      k.Key
+	ID      Key
 	Address string
 }
 

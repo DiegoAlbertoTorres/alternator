@@ -4,17 +4,13 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
-	k "git/alternator/key"
-	p "git/alternator/peer"
+	"git/alternator"
+	"log"
 	"net/rpc"
 	"os"
 )
 
-// Config stores Alternator's configuration settings
-var Config struct {
-	fullKeys       bool
-	memberSyncTime int
-}
+var config alternator.Config
 
 var sigChan chan os.Signal
 
@@ -28,8 +24,8 @@ func main() {
 	flag.StringVar(&addr, "target", "127.0.0.1", "target address for commands.")
 	flag.StringVar(&command, "command", "", "name of command.")
 	flag.StringVar(&joinPort, "join", "0", "joins the ring that the node at [address]:[port] belongs to.")
-	flag.IntVar(&Config.memberSyncTime, "memberSyncTime", 400, "sets the time between membership syncs with a random node.")
-	flag.BoolVar(&Config.fullKeys, "fullKeys", false, "if true all keys (hashes) are printed completely.")
+	flag.IntVar(&config.MemberSyncTime, "memberSyncTime", 400, "sets the time between membership syncs with a random node.")
+	flag.BoolVar(&config.FullKeys, "fullKeys", false, "if true all keys (hashes) are printed completely.")
 	flag.Parse()
 
 	if command != "" {
@@ -38,38 +34,41 @@ func main() {
 		checkErr("dialing:", err)
 		switch command {
 		case "FindSuccessor":
-			key := k.Random()
+			key := alternator.Random()
 			fmt.Println("Finding successor of ", key)
-			var reply p.Peer
+			var reply alternator.Peer
 			err = client.Call("Alternator."+command, key, &reply)
 			checkErr("RPC failed", err)
 			fmt.Println(reply.String())
 		case "Put":
 			args := flag.Args()
 			if len(args) < 2 {
-				printExit("Usage: Put key value dest1 dest2 dest3...")
+				fmt.Println("Usage: Put key value dest1 dest2 dest3...")
+				os.Exit(1)
 			}
 			// Prepare key and value
 			name := args[0]
 			val := []byte(args[1])
-			var dests []k.Key
+			var dests []alternator.Key
 			if len(args[2:]) < 0 {
 				fmt.Println("Need to give at least one destination node")
 				return
 			}
 			for _, arg := range args[2:] {
 				dest, _ := hex.DecodeString(arg)
-				dests = append(dests, k.SliceToKey(dest))
+				dests = append(dests, alternator.SliceToKey(dest))
 			}
 
 			fmt.Println("Putting pair " + name + "," + args[1])
-			err = client.Call("Alternator."+command, &PutArgs{name, val, dests, 0}, &struct{}{})
+			putArgs := alternator.PutArgs{Name: name, V: val, Replicants: dests, Success: 0}
+			err = client.Call("Alternator."+command, &putArgs, &struct{}{})
 			checkErr("RPC failed", err)
 			fmt.Println("Success!")
 		case "Get":
 			args := flag.Args()
 			if len(args) < 1 {
-				printExit("Usage: Get key")
+				fmt.Println("Usage: Get key")
+				os.Exit(1)
 			}
 			// Prepare key and value
 			name := args[0]
@@ -85,10 +84,18 @@ func main() {
 	} else {
 		// Create a new node
 		if joinPort != "0" { // Join an existing ring
-			InitNode(port, addr+":"+joinPort)
+			alternator.InitNode(config, port, addr+":"+joinPort)
 		} else {
-			InitNode(port, "") // Create a new ring
+			alternator.InitNode(config, port, "") // Create a new ring
 		}
 	}
 	return
+}
+
+func checkErr(str string, err error) bool {
+	if err != nil {
+		log.Print(str+": ", err)
+		return true
+	}
+	return false
 }

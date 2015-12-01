@@ -1,8 +1,7 @@
-package members
+package alternator
 
 import (
 	"fmt"
-	p "git/alternator/peer"
 	"time"
 )
 
@@ -13,7 +12,7 @@ type History []HistEntry
 type HistEntry struct {
 	Time  time.Time
 	Class int
-	Node  p.Peer
+	Node  Peer
 }
 
 // Entry classes
