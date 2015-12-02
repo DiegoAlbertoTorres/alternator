@@ -101,7 +101,7 @@ func (members Members) String() (str string) {
 }
 
 // Compares member table to neighbors, adds new
-// func (altNode *Alternator) updateMembers() {
+// func (altNode *Node) updateMembers() {
 // 	var successorMembers []*Peer
 // 	// Get successors members
 // 	if altNode.Successor != nil {

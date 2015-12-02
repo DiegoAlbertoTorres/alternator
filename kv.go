@@ -34,7 +34,7 @@ type BatchInsertArgs struct {
 	Vals [][]byte
 }
 
-func (altNode *Alternator) initDB() {
+func (altNode *Node) initDB() {
 	err := os.MkdirAll(altNode.Config.DotPath, 0777)
 	checkFatal("failed to make db path", err)
 	boltdb, err := bolt.Open(altNode.Config.DotPath+altNode.Port+".db", 0600, nil)
@@ -90,9 +90,9 @@ func (db *DB) close() {
 }
 
 // PutData puts the (hash(name), val) pair in DB
-func (altNode *Alternator) PutData(args *PutArgs, _ *struct{}) error {
+func (altNode *Node) PutData(args *PutArgs, _ *struct{}) error {
 	k := StringToKey(args.Name)
-	err := altNode.DB.Update(func(tx *bolt.Tx) error {
+	err := altNode.DB.Batch(func(tx *bolt.Tx) error {
 		b := tx.Bucket(dataBucket)
 		err := b.Put(k[:], args.V)
 		return err
@@ -110,11 +110,11 @@ type PutMetaArgs struct {
 }
 
 // PutMetadata puts the (key, val) pair in DB
-func (altNode *Alternator) PutMetadata(args *PutMetaArgs, _ *struct{}) error {
+func (altNode *Node) PutMetadata(args *PutMetaArgs, _ *struct{}) error {
 	k := StringToKey(args.Name)
 	// Serialize replicants
 	md := serialize(args.MD)
-	err := altNode.DB.Update(func(tx *bolt.Tx) error {
+	err := altNode.DB.Batch(func(tx *bolt.Tx) error {
 		b := tx.Bucket(metaDataBucket)
 		err := b.Put(k[:], md)
 		return err
@@ -126,8 +126,8 @@ func (altNode *Alternator) PutMetadata(args *PutMetaArgs, _ *struct{}) error {
 }
 
 // DropKeyMD Drops all metadata associated with a key
-func (altNode *Alternator) DropKeyMD(k *Key, _ *struct{}) error {
-	err := altNode.DB.Update(func(tx *bolt.Tx) error {
+func (altNode *Node) DropKeyMD(k *Key, _ *struct{}) error {
+	err := altNode.DB.Batch(func(tx *bolt.Tx) error {
 		b := tx.Bucket(metaDataBucket)
 		err := b.Delete(k[:])
 		return err
@@ -136,8 +136,8 @@ func (altNode *Alternator) DropKeyMD(k *Key, _ *struct{}) error {
 }
 
 // DropKeyData drops all data associated with a key
-func (altNode *Alternator) DropKeyData(k *Key, _ *struct{}) error {
-	err := altNode.DB.Update(func(tx *bolt.Tx) error {
+func (altNode *Node) DropKeyData(k *Key, _ *struct{}) error {
+	err := altNode.DB.Batch(func(tx *bolt.Tx) error {
 		b := tx.Bucket(dataBucket)
 		err := b.Delete(k[:])
 		return err
@@ -151,7 +151,7 @@ type Metadata struct {
 }
 
 // Put a (key, value) pair in the system
-func (altNode *Alternator) Put(args *PutArgs, _ *struct{}) error {
+func (altNode *Node) Put(args *PutArgs, _ *struct{}) error {
 	k := StringToKey(args.Name)
 	var successor Peer
 	err := altNode.FindSuccessor(k, &successor)
@@ -231,7 +231,7 @@ func (altNode *Alternator) Put(args *PutArgs, _ *struct{}) error {
 }
 
 // undoPutData undoes all data puts for a key in a set of nodes
-func (altNode *Alternator) undoPutData(k Key, nodes []*Peer) error {
+func (altNode *Node) undoPutData(k Key, nodes []*Peer) error {
 	for _, node := range nodes {
 		MakeRemoteCall(node, "DropKeyData", k, &struct{}{})
 	}
@@ -240,7 +240,7 @@ func (altNode *Alternator) undoPutData(k Key, nodes []*Peer) error {
 }
 
 // undoPutMD undoes all metadata puts for a key in a set of nodes
-func (altNode *Alternator) undoPutMD(k Key, nodes []*Peer) error {
+func (altNode *Node) undoPutMD(k Key, nodes []*Peer) error {
 	for _, node := range nodes {
 		MakeRemoteCall(node, "DropKeyMD", k, &struct{}{})
 	}
@@ -249,7 +249,7 @@ func (altNode *Alternator) undoPutMD(k Key, nodes []*Peer) error {
 }
 
 // GetMetadata returns the metadata (serialized) of a specific variable
-func (altNode *Alternator) GetMetadata(k Key, md *[]byte) error {
+func (altNode *Node) GetMetadata(k Key, md *[]byte) error {
 	// fmt.Println("About to get metadata")
 	return altNode.DB.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket(metaDataBucket)
@@ -264,7 +264,7 @@ func (altNode *Alternator) GetMetadata(k Key, md *[]byte) error {
 }
 
 // GetData returns the metadata (serialized) of a specific variable
-func (altNode *Alternator) GetData(k Key, data *[]byte) error {
+func (altNode *Node) GetData(k Key, data *[]byte) error {
 	// fmt.Println("About to get data")
 	return altNode.DB.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket(dataBucket)
@@ -279,7 +279,7 @@ func (altNode *Alternator) GetData(k Key, data *[]byte) error {
 }
 
 // Get gets from the system the value corresponding to the key
-func (altNode *Alternator) Get(name string, ret *[]byte) error {
+func (altNode *Node) Get(name string, ret *[]byte) error {
 	k := StringToKey(name)
 	var rawMD []byte
 
@@ -326,7 +326,7 @@ type BatchPutArgs struct {
 }
 
 // BatchPut puts a set of key-value pairs in the specified bucket
-func (altNode *Alternator) BatchPut(args BatchPutArgs, _ *struct{}) error {
+func (altNode *Node) BatchPut(args BatchPutArgs, _ *struct{}) error {
 	err := altNode.DB.Batch(func(tx *bolt.Tx) error {
 		b := tx.Bucket(args.Bucket)
 		anyError := false

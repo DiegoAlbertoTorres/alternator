@@ -31,7 +31,7 @@ func MakeRemoteCall(callee *Peer, call string, args interface{}, result interfac
 		}
 		ClientMap[callee.Address] = client
 	}
-	err = client.Call("Alternator."+call, args, result)
+	err = client.Call("Node."+call, args, result)
 	if err != nil {
 		log.Print("RPC call failed, client "+callee.Address+" down? ", err)
 		Close(callee)
@@ -57,7 +57,7 @@ func MakeAsyncCall(callee *Peer, call string, args interface{}, result interface
 		}
 		ClientMap[callee.Address] = client
 	}
-	asyncCall := client.Go("Alternator."+call, args, result, nil)
+	asyncCall := client.Go("Node."+call, args, result, nil)
 
 	return asyncCall
 }

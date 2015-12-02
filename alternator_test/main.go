@@ -34,6 +34,7 @@ func main() {
 
 	ports := []int{38650, 34001, 50392, 43960, 56083, 54487, 56043, 33846}
 	// ports := []int{38650, 50392, 56083, 56043}
+	// ports := []int{38650, 33846}
 	nPeers := len(ports)
 	ids := makeIDs(ports)
 	peers := makePeers(ports)
@@ -65,13 +66,13 @@ func main() {
 	}
 
 	var wg sync.WaitGroup
-	// Randomly generate nEntries, insert them to Alternator
+	// Randomly generate nEntries, insert them to Node
 	for i := 0; i < Config.nEntries; i++ {
 		name := randString(10)
 		v := []byte(randString(20))
 		reps := randomIDs(ids)
 		fmt.Printf("PUT %v, w/e in %v\n", name, reps)
-		// Insert it into Alternator
+		// Insert it into Node
 		args := alt.PutArgs{Name: name, V: v, Replicants: reps, Success: 0}
 		// Insert into own map for later verification
 		verificationMap[name] = v
@@ -99,8 +100,8 @@ func main() {
 	// 	// cmd.Process.Kill()
 	// }
 
-	fmt.Println("kill some stuff!")
-	time.Sleep(5 * time.Second)
+	// fmt.Println("kill some stuff!")
+	// time.Sleep(5 * time.Second)
 
 	// Now check each entry
 	correct := 0

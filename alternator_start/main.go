@@ -1,3 +1,6 @@
+// package alternator_start is a launcher for a single alternator node. It takes command line
+// arguments to use as the node's configuration. It can also be used as a command line tool to
+// make RPC calls to existing nodes.
 package main
 
 import (
@@ -31,6 +34,7 @@ func main() {
 	flag.IntVar(&config.N, "n", 2, "sets the amount of nodes that replicate metadata.")
 	flag.StringVar(&config.DotPath, "dotPath", os.Getenv("HOME")+"/.alternator/", "sets the directory for alternator's data.")
 	flag.BoolVar(&config.FullKeys, "fullKeys", false, "if true all keys (hashes) are printed completely.")
+	flag.BoolVar(&config.CPUProfile, "cpuprofile", false, "write cpu profile to file")
 	flag.Parse()
 
 	if command != "" {
@@ -42,7 +46,7 @@ func main() {
 			key := alternator.RandomKey()
 			fmt.Println("Finding successor of ", key)
 			var reply alternator.Peer
-			err = client.Call("Alternator."+command, key, &reply)
+			err = client.Call("Node."+command, key, &reply)
 			checkErr("RPC failed", err)
 			fmt.Println(reply.String())
 		case "Put":
@@ -66,7 +70,7 @@ func main() {
 
 			fmt.Println("Putting pair " + name + "," + args[1])
 			putArgs := alternator.PutArgs{Name: name, V: val, Replicants: dests, Success: 0}
-			err = client.Call("Alternator."+command, &putArgs, &struct{}{})
+			err = client.Call("Node."+command, &putArgs, &struct{}{})
 			checkErr("RPC failed", err)
 			fmt.Println("Success!")
 		case "Get":
@@ -79,11 +83,11 @@ func main() {
 			name := args[0]
 			var val []byte
 			fmt.Println("Getting " + name)
-			err = client.Call("Alternator."+command, name, &val)
+			err = client.Call("Node."+command, name, &val)
 			checkErr("RPC failed", err)
 			fmt.Println(string(val))
 		case "LeaveRing":
-			err = client.Call("Alternator."+command, struct{}{}, &struct{}{})
+			err = client.Call("Node."+command, struct{}{}, &struct{}{})
 			checkErr("RPC failed", err)
 		}
 	} else {
