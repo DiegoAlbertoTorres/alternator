@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net/rpc"
+	"os"
 	"os/exec"
 	"strconv"
 	"sync"
@@ -35,9 +36,9 @@ func main() {
 	ports := []int{38650, 34001, 50392, 43960, 56083, 54487, 56043, 33846}
 	// ports := []int{38650, 50392, 56083, 56043}
 	// ports := []int{38650, 33846}
-	nPeers := len(ports)
-	ids := makeIDs(ports)
-	peers := makePeers(ports)
+	// nPeers := len(ports)
+	// ids := makeIDs(ports)
+	// peers := makePeers(ports)
 	var cmds []*exec.Cmd
 
 	verificationMap := make(map[string][]byte, Config.nEntries)
@@ -59,7 +60,18 @@ func main() {
 		time.Sleep(200 * time.Millisecond)
 	}
 
-	time.Sleep(3 * time.Second)
+	var peers []alt.Peer
+	firstPeer := alt.Peer{ID: alt.GenID(strconv.Itoa(ports[0])), Address: "127.0.0.1:" + strconv.Itoa(ports[0])}
+	err := alt.MakeRemoteCall(&firstPeer, "GetMembers", struct{}{}, &peers)
+	if err != nil {
+		fmt.Println("Failed to get members from first node!")
+		os.Exit(1)
+	}
+	ids := getIDs(peers)
+	nPeers := len(peers)
+
+	// Time for ring to stabilize
+	time.Sleep(2 * time.Second)
 
 	if Config.diego {
 		exec.Command("i3-msg", "workspace", "prev").Run()
@@ -133,21 +145,12 @@ func randString(n int) string {
 	return string(b)
 }
 
-func makeIDs(ports []int) []alt.Key {
+func getIDs(peers []alt.Peer) []alt.Key {
 	var ids []alt.Key
-	for i := range ports {
-		ids = append(ids, alt.GenID(strconv.Itoa(ports[i])))
+	for _, peer := range peers {
+		ids = append(ids, peer.ID)
 	}
 	return ids
-}
-
-func makePeers(ports []int) []alt.Peer {
-	var peers []alt.Peer
-	for i := range ports {
-		peer := alt.Peer{ID: alt.GenID(strconv.Itoa(ports[i])), Address: "127.0.0.1:" + strconv.Itoa(ports[i])}
-		peers = append(peers, peer)
-	}
-	return peers
 }
 
 func randomIDs(ids []alt.Key) []alt.Key {

@@ -89,6 +89,12 @@ func main() {
 		case "LeaveRing":
 			err = client.Call("Node."+command, struct{}{}, &struct{}{})
 			checkErr("RPC failed", err)
+		case "GetMembers":
+			var members []alternator.Peer
+			err = client.Call("Node."+command, struct{}{}, &members)
+			for _, member := range members {
+				fmt.Println(member)
+			}
 		}
 	} else {
 		// Create a new node

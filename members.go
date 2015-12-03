@@ -27,14 +27,6 @@ func getPeer(e *list.Element) *Peer {
 	return nil
 }
 
-// Inserts a member
-// func (members *Members) sliceInsert(new *Peer, i int) {
-// 	// Grow the slice by one element.
-// 	members.Slice = append(members.Slice, &Peer{})
-// 	copy(members.Slice[i+1:], members.Slice[i:])
-// 	members.Slice[i] = new
-// }
-
 // FindSuccessor finds the successor of a key in the ring
 func (members *Members) FindSuccessor(key Key) (*list.Element, error) {
 	// Find ID of successor

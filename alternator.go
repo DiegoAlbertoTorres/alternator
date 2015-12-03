@@ -208,6 +208,16 @@ func (altNode *Node) selfExt() Peer {
 	return Peer{ID: altNode.ID, Address: altNode.Address}
 }
 
+// GetMembers returns an array of peers with all the members in the ring
+func (altNode *Node) GetMembers(_ struct{}, ret *[]Peer) error {
+	var members []Peer
+	for current := altNode.Members.List.Front(); current != nil; current = current.Next() {
+		members = append(members, *getPeer(current))
+	}
+	*ret = members
+	return nil
+}
+
 // Heartbeat returns an 'OK' to the caller
 func (altNode *Node) Heartbeat(_ struct{}, ret *string) error {
 	// fmt.Println("Heartbeat called!")
