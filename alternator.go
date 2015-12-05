@@ -11,6 +11,9 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"sync"
+
+	"github.com/boltdb/bolt"
 	// _ "net/http/pprof" // Uncomment for profiling
 	"net/rpc"
 	"os"
@@ -23,25 +26,30 @@ import (
 
 // Node is a member of the DHT.
 type Node struct {
-	ID         Key
-	Address    string
-	Port       string
-	Members    Members
-	MemberHist history
-	DB         *DB
-	Config     Config
+	ID          Key
+	Address     string
+	Port        string
+	Members     Members
+	MemberHist  history
+	DB          *DB
+	Config      Config
+	RPCListener net.Listener
 }
 
 // Config stores a node's configuration settings.
 type Config struct {
 	// Whether output uses complete keys or abbreviations.
 	FullKeys bool
-	// Time between history syncs with a random peer.
+	// Time (in ms) between history syncs with a random peer.
 	MemberSyncTime int
-	// Time between heartbeats.
+	// Time (in ms) between heartbeats.
 	HeartbeatTime int
-	// Time before a heartbeat times out.
+	// Time (in ms) before a heartbeat times out.
 	HeartbeatTimeout int
+	// PutMDTimeout is the time (in ms) before a PutMD times out.
+	PutMDTimeout int
+	// PutDataTimeout is the time (in ms) before a PutData times out.
+	PutDataTimeout int
 	// N is the number of nodes in which metadata is replicated.
 	N int
 	// Directory for alternator's data.
@@ -86,7 +94,7 @@ type JoinRequestArgs struct {
 // JoinRequest handles a request by another node to join the ring
 func (altNode *Node) JoinRequest(other *Peer, ret *JoinRequestArgs) error {
 	// Find pairs in joiner's range
-	keys, vals := altNode.DB.getRange(altNode.ID, other.ID)
+	keys, vals := altNode.DB.getMDRange(altNode.ID, other.ID)
 	// fmt.Printf("giving pairs in range %s to %s\n", keyToString(altNode.ID), keyToString(other.ID))
 	for i := range keys {
 		fmt.Println(keys[i])
@@ -152,15 +160,23 @@ func (altNode *Node) LeaveRequest(args *LeaveRequestArgs, _ *struct{}) error {
 }
 
 // LeaveRing makes the node leave the ring it is in
-func (altNode *Node) LeaveRing(_ struct{}, _ *struct{}) error {
+func (altNode *Node) leaveRing() error {
+	// Stop accepting RPC calls
+	altNode.RPCListener.Close()
+
+	// RePut each entry
+	altNode.rePutAllData()
+
 	successor := altNode.getSuccessor()
 	if *successor == altNode.selfExt() {
 		os.Exit(0)
 		return nil
 	}
-	keys, vals := altNode.DB.getRange(altNode.getPredecessor().ID, altNode.ID) // Gather entries
+
+	// Hand keys to successor
+	mdKeys, mdVals := altNode.DB.getMDRange(altNode.getPredecessor().ID, altNode.ID) // Gather entries
 	departureEntry := histEntry{Time: time.Now(), Class: histLeave, Node: altNode.selfExt()}
-	args := LeaveRequestArgs{keys, vals, departureEntry}
+	args := LeaveRequestArgs{mdKeys, mdVals, departureEntry}
 
 	var err error
 	// Leave by notifying successor
@@ -169,15 +185,31 @@ func (altNode *Node) LeaveRing(_ struct{}, _ *struct{}) error {
 		return ErrLeaveFail
 	}
 	altNode.DB.close()
-	// if altNode.Config.CPUProfile != "" {
-	// 	fmt.Println("Stopped!!")
-	// 	fmt.Println("Stopped!!")
-	// 	fmt.Println("Stopped!!")
-	// 	fmt.Println("Stopped!!")
-	// 	time.Sleep(3 * time.Second)
-	// }
 	os.Exit(0)
 	return nil
+}
+
+func (altNode *Node) rePutAllData() {
+	altNode.DB.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(dataBucket)
+		c := b.Cursor()
+
+		var wg sync.WaitGroup
+		for kslice, v := c.First(); kslice != nil; kslice, v = c.Next() {
+			var successor Peer
+			k := SliceToKey(kslice)
+			altNode.FindSuccessor(k, &successor)
+			rpArgs := RePutArgs{LeaverID: altNode.ID, K: k, V: v}
+			call := MakeAsyncCall(&successor, "RePut", rpArgs, &struct{}{})
+			go func(call *rpc.Call) {
+				reply := <-call.Done
+				checkErr("Reput failed", reply.Error)
+				wg.Done()
+			}(call)
+		}
+		wg.Wait()
+		return nil
+	})
 }
 
 func (altNode Node) string() (str string) {
@@ -244,7 +276,7 @@ func (altNode *Node) checkPredecessor() {
 		// Something wrong
 		if (err != nil) || (beat != "OK") {
 			// Kill connection
-			Close(predecessor)
+			RPCClose(predecessor)
 
 			// altNode.setPredecessor(nil, "checkPredecessor()")
 		}
@@ -252,7 +284,7 @@ func (altNode *Node) checkPredecessor() {
 	case <-time.After(time.Duration(altNode.Config.HeartbeatTimeout) * time.Millisecond):
 		fmt.Println("Predecessor stopped responding, ceasing connection")
 		// Kill connection
-		Close(predecessor)
+		RPCClose(predecessor)
 
 		// altNode.setPredecessor(nil, "checkPredecessor()")
 	}
@@ -394,7 +426,7 @@ func (altNode *Node) sigHandler() {
 		sig := <-sigChan
 		switch sig {
 		case os.Interrupt:
-			altNode.LeaveRing(struct{}{}, &struct{}{})
+			altNode.leaveRing()
 		case os.Kill:
 			os.Exit(1)
 		}
@@ -416,6 +448,7 @@ func InitNode(conf Config, port string, address string) {
 	node.Address = "127.0.0.1:" + port
 	node.Port = port
 	node.ID = GenID(port)
+	node.RPCListener = l
 	node.Config = conf
 	node.Members.Init()
 	node.initDB()
@@ -433,6 +466,8 @@ func InitNode(conf Config, port string, address string) {
 	} else { // Else make a new ring
 		node.createRing()
 	}
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go node.autoCheckPredecessor()
 	go node.autoSyncMembers()
 	go node.sigHandler()
@@ -447,8 +482,8 @@ func InitNode(conf Config, port string, address string) {
 
 	fmt.Println(node.string())
 	fmt.Println("Listening on port " + port)
-	// go rofl()
-	// // go rofl(l)
 	http.Serve(l, nil)
+	// TODO: undo hackyness
+	wg.Wait()
 	return
 }

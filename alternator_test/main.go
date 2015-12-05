@@ -112,8 +112,8 @@ func main() {
 	// 	// cmd.Process.Kill()
 	// }
 
-	// fmt.Println("kill some stuff!")
-	// time.Sleep(5 * time.Second)
+	fmt.Println("kill some stuff!")
+	time.Sleep(10 * time.Second)
 
 	// Now check each entry
 	correct := 0
@@ -124,7 +124,7 @@ func main() {
 			if err == nil || err.Error() == alt.ErrDataLost.Error() {
 				break
 			} else {
-				fmt.Println("rofl", err)
+				fmt.Println("Get failed", err)
 			}
 		}
 		if bytes.Compare(v, result) == 0 {

@@ -3,11 +3,11 @@ package alternator
 import (
 	"bytes"
 	"encoding/gob"
-	"fmt"
 	"log"
 	"net/rpc"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/boltdb/bolt"
 )
@@ -60,8 +60,8 @@ func (altNode *Node) initDB() {
 	}
 }
 
-// GetRange returns all keys and values in a given range
-func (db *DB) getRange(min, max Key) ([]Key, [][]byte) {
+// getMDRange returns all keys and values in a given range
+func (db *DB) getMDRange(min, max Key) ([]Key, [][]byte) {
 	var keys []Key
 	var vals [][]byte
 
@@ -97,9 +97,9 @@ func (altNode *Node) PutData(args *PutArgs, _ *struct{}) error {
 		err := b.Put(k[:], args.V)
 		return err
 	})
-	if err == nil {
-		log.Print("Stored pair " + args.Name + "," + string(args.V) + " key is " + k.String())
-	}
+	// if err == nil {
+	// 	log.Print("Stored pair " + args.Name + "," + string(args.V) + " key is " + k.String())
+	// }
 	return err
 }
 
@@ -119,9 +119,9 @@ func (altNode *Node) PutMetadata(args *PutMetaArgs, _ *struct{}) error {
 		err := b.Put(k[:], md)
 		return err
 	})
-	if err == nil {
-		log.Print("Stored metadata for " + args.Name + ", key is " + k.String())
-	}
+	// if err == nil {
+	// 	log.Print("Stored metadata for " + args.Name + ", key is " + k.String())
+	// }
 	return err
 }
 
@@ -147,6 +147,7 @@ func (altNode *Node) DropKeyData(k *Key, _ *struct{}) error {
 
 // Metadata represents the metadata of a (key, value) pair
 type Metadata struct {
+	Name       string
 	Replicants []Key
 }
 
@@ -162,7 +163,7 @@ func (altNode *Node) Put(args *PutArgs, _ *struct{}) error {
 		return err
 	}
 	// Else resolve in this node
-	putMDArgs := PutMetaArgs{args.Name, Metadata{args.Replicants}}
+	putMDArgs := PutMetaArgs{Name: args.Name, MD: Metadata{Name: args.Name, Replicants: args.Replicants}}
 	// // Store metadata here
 	// altNode.PutMetadata(&putMDArgs, &struct{}{})
 
@@ -178,10 +179,15 @@ func (altNode *Node) Put(args *PutArgs, _ *struct{}) error {
 		call := MakeAsyncCall(getPeer(current), "PutMetadata", putMDArgs, &struct{}{})
 		mdWg.Add(1)
 		go func(call *rpc.Call) {
-			defer mdWg.Done()
-			reply := <-call.Done
-			if !checkErr("metadata put fail", reply.Error) {
-				mdSuccess++
+			// defer mdWg.Done()
+			select {
+			case reply := <-call.Done:
+				if !checkErr("metadata put fail", reply.Error) {
+					mdSuccess++
+				}
+				mdWg.Done()
+			case <-time.After(time.Duration(altNode.Config.PutMDTimeout) * time.Millisecond):
+				mdWg.Done()
 			}
 		}(call)
 		i++
@@ -201,11 +207,15 @@ func (altNode *Node) Put(args *PutArgs, _ *struct{}) error {
 		call := MakeAsyncCall(rep, "PutData", args, &struct{}{})
 		dataWg.Add(1)
 		go func(call *rpc.Call) {
-			defer dataWg.Done()
-			reply := <-call.Done
-			if !checkErr("failed to put data in replicant", reply.Error) {
-				dataReplicants = append(dataReplicants, rep)
-				dataSuccess++
+			select {
+			case reply := <-call.Done:
+				if !checkErr("failed to put data in replicant", reply.Error) {
+					dataReplicants = append(dataReplicants, rep)
+					dataSuccess++
+				}
+				dataWg.Done()
+			case <-time.After(time.Duration(altNode.Config.PutDataTimeout) * time.Millisecond):
+				dataWg.Done()
 			}
 		}(call)
 	}
@@ -228,6 +238,52 @@ func (altNode *Node) Put(args *PutArgs, _ *struct{}) error {
 		return ErrPutFail
 	}
 	return nil
+}
+
+// RePutArgs are areguments for a call to RePut
+type RePutArgs struct {
+	LeaverID Key
+	K        Key
+	V        []byte
+}
+
+// RePut redoes a Put
+func (altNode *Node) RePut(args *RePutArgs, _ *struct{}) error {
+	// var successor Peer
+	successor := altNode.getNthSuccessor(1)
+	if successor.ID == args.LeaverID {
+		successor = altNode.getNthSuccessor(2)
+		if successor.ID == args.LeaverID {
+			log.Print("Cannot do RePut, successor leaving")
+			return ErrRePutFail
+		}
+	}
+	// Get metadata from chain
+	md := altNode.chainGetMetadata(args.K)
+
+	// Find leaver
+	var i int
+	for i = range md.Replicants {
+		if md.Replicants[i] == args.LeaverID {
+			var randomID Key
+			// Get some random, different ID
+			for {
+				randomID = altNode.Members.GetRandom().ID
+				if randomID != md.Replicants[i] {
+					break
+				}
+			}
+			// Replace
+			md.Replicants[i] = randomID
+			break
+		}
+	}
+	// Do the put again
+	putArgs := PutArgs{Name: md.Name, V: args.V, Replicants: md.Replicants, Success: 0}
+	err := MakeRemoteCall(successor, "Put", putArgs, &struct{}{})
+	checkErr("Put failed", err)
+
+	return err
 }
 
 // undoPutData undoes all data puts for a key in a set of nodes
@@ -254,11 +310,10 @@ func (altNode *Node) GetMetadata(k Key, md *[]byte) error {
 	return altNode.DB.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket(metaDataBucket)
 		*md = b.Get(k[:])
-		fmt.Println("Getting meta", k)
+		// fmt.Println("Getting meta", k)
 		if md == nil {
 			return ErrKeyNotFound
 		}
-		// fmt.Printf("The answer is: %s\n", v)
 		return nil
 	})
 }
@@ -281,23 +336,9 @@ func (altNode *Node) GetData(k Key, data *[]byte) error {
 // Get gets from the system the value corresponding to the key
 func (altNode *Node) Get(name string, ret *[]byte) error {
 	k := StringToKey(name)
-	var rawMD []byte
 
 	// Get replicants from metadata chain
-	var successor Peer
-	altNode.FindSuccessor(k, &successor)
-	i := 0
-	for current := altNode.Members.Map[successor.ID]; i < altNode.Config.N; current = current.Next() {
-		if current == nil {
-			current = altNode.Members.List.Front()
-		}
-		i++
-		err := MakeRemoteCall(getPeer(current), "GetMetadata", k, &rawMD)
-		if err == nil {
-			break
-		}
-	}
-	md := bytesToMetadata(rawMD)
+	md := altNode.chainGetMetadata(k)
 
 	// Get data from some replicant
 	for _, repID := range md.Replicants {
@@ -316,6 +357,27 @@ func (altNode *Node) Get(name string, ret *[]byte) error {
 	}
 	// None of the replicants had the data?
 	return ErrDataLost
+}
+
+// TODO: write chainGetData
+
+func (altNode *Node) chainGetMetadata(k Key) Metadata {
+	var successor Peer
+	var rawMD []byte
+	altNode.FindSuccessor(k, &successor)
+	i := 0
+	for current := altNode.Members.Map[successor.ID]; i < altNode.Config.N; current = current.Next() {
+		if current == nil {
+			current = altNode.Members.List.Front()
+		}
+		err := MakeRemoteCall(getPeer(current), "GetMetadata", k, &rawMD)
+		if err == nil {
+			break
+		}
+		i++
+	}
+	md := bytesToMetadata(rawMD)
+	return md
 }
 
 // BatchPutArgs are the arguments for a batch put

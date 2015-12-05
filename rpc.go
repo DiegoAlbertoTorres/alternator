@@ -34,7 +34,7 @@ func MakeRemoteCall(callee *Peer, call string, args interface{}, result interfac
 	err = client.Call("Node."+call, args, result)
 	if err != nil {
 		log.Print("RPC call failed, client "+callee.Address+" down? ", err)
-		Close(callee)
+		RPCClose(callee)
 	}
 
 	return err
@@ -62,8 +62,8 @@ func MakeAsyncCall(callee *Peer, call string, args interface{}, result interface
 	return asyncCall
 }
 
-// Close closes and RPC connection
-func Close(node *Peer) {
+// RPCClose closes and RPC connection
+func RPCClose(node *Peer) {
 	if node == nil {
 		return
 	}

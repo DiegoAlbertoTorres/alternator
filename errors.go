@@ -28,6 +28,9 @@ var (
 
 	// ErrBatchPutIncomplete occurs when a batch put fails to put some pairs in the DB
 	ErrBatchPutIncomplete = errors.New("batch operation did not put all pairs successfully")
+
+	// ErrRePutFail occurs when reput fails
+	ErrRePutFail = errors.New("reput failed")
 )
 
 func assertRemoteErr(err error, typ string) bool {
