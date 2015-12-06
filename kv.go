@@ -2,7 +2,6 @@ package alternator
 
 import (
 	"bytes"
-	"encoding/gob"
 	"log"
 	"net/rpc"
 	"os"
@@ -15,52 +14,20 @@ import (
 var dataBucket = []byte("data")
 var metaDataBucket = []byte("metadata")
 
+// Metadata represents the metadata of a (key, value) pair
+type Metadata struct {
+	Name       string
+	Replicants []Key
+}
+
+/* Database struct and methods */
+
 // DB is a wrapper around bolt's DB struct, so that methods can be added
 type DB struct {
 	*bolt.DB
 }
 
-// PutArgs is a struct to represent the arguments of Put or DBPut
-type PutArgs struct {
-	Name       string
-	V          []byte
-	Replicants []Key
-	Success    int
-}
-
-// BatchInsertArgs is a struct to represent the arguments of BatchInsert
-type BatchInsertArgs struct {
-	Keys []Key
-	Vals [][]byte
-}
-
-func (altNode *Node) initDB() {
-	err := os.MkdirAll(altNode.Config.DotPath, 0777)
-	checkFatal("failed to make db path", err)
-	boltdb, err := bolt.Open(altNode.Config.DotPath+altNode.Port+".db", 0600, nil)
-	altNode.DB = &DB{boltdb}
-	if !checkFatal("failed to open .db file", err) {
-		// Create a bucket for all entries
-		altNode.DB.Update(func(tx *bolt.Tx) error {
-			// Create buckets
-			_, err := tx.CreateBucket(dataBucket)
-			if err != nil {
-				if err != bolt.ErrBucketExists {
-					log.Fatal(err)
-				}
-			}
-			_, err = tx.CreateBucket(metaDataBucket)
-			if err != nil {
-				if err != bolt.ErrBucketExists {
-					log.Fatal(err)
-				}
-			}
-			return nil
-		})
-	}
-}
-
-// getMDRange returns all keys and values in a given range
+// getMDRange returns all key,value pairs in a given key range
 func (db *DB) getMDRange(min, max Key) ([]Key, [][]byte) {
 	var keys []Key
 	var vals [][]byte
@@ -89,66 +56,41 @@ func (db *DB) close() {
 	db.Close()
 }
 
-// PutData puts the (hash(name), val) pair in DB
-func (altNode *Node) PutData(args *PutArgs, _ *struct{}) error {
-	k := StringToKey(args.Name)
-	err := altNode.DB.Batch(func(tx *bolt.Tx) error {
-		b := tx.Bucket(dataBucket)
-		err := b.Put(k[:], args.V)
-		return err
-	})
-	// if err == nil {
-	// 	log.Print("Stored pair " + args.Name + "," + string(args.V) + " key is " + k.String())
-	// }
-	return err
+// Initialize a node's database in the filesystem, create buckets
+func (altNode *Node) initDB() {
+	err := os.MkdirAll(altNode.Config.DotPath, 0777)
+	checkFatal("failed to make db path", err)
+	boltdb, err := bolt.Open(altNode.Config.DotPath+altNode.Port+".db", 0600, nil)
+	altNode.DB = &DB{boltdb}
+	if !checkFatal("failed to open .db file", err) {
+		// Create a bucket for all entries
+		altNode.DB.Update(func(tx *bolt.Tx) error {
+			// Create buckets
+			_, err := tx.CreateBucket(dataBucket)
+			if err != nil {
+				if err != bolt.ErrBucketExists {
+					log.Fatal(err)
+				}
+			}
+			_, err = tx.CreateBucket(metaDataBucket)
+			if err != nil {
+				if err != bolt.ErrBucketExists {
+					log.Fatal(err)
+				}
+			}
+			return nil
+		})
+	}
 }
 
-// PutMetaArgs represents the arguments of a call to PutMetadata
-type PutMetaArgs struct {
-	Name string
-	MD   Metadata
-}
+/* kv-store methods for PUTTING (inserting) into the database */
 
-// PutMetadata puts the (key, val) pair in DB
-func (altNode *Node) PutMetadata(args *PutMetaArgs, _ *struct{}) error {
-	k := StringToKey(args.Name)
-	// Serialize replicants
-	md := serialize(args.MD)
-	err := altNode.DB.Batch(func(tx *bolt.Tx) error {
-		b := tx.Bucket(metaDataBucket)
-		err := b.Put(k[:], md)
-		return err
-	})
-	// if err == nil {
-	// 	log.Print("Stored metadata for " + args.Name + ", key is " + k.String())
-	// }
-	return err
-}
-
-// DropKeyMD Drops all metadata associated with a key
-func (altNode *Node) DropKeyMD(k *Key, _ *struct{}) error {
-	err := altNode.DB.Batch(func(tx *bolt.Tx) error {
-		b := tx.Bucket(metaDataBucket)
-		err := b.Delete(k[:])
-		return err
-	})
-	return err
-}
-
-// DropKeyData drops all data associated with a key
-func (altNode *Node) DropKeyData(k *Key, _ *struct{}) error {
-	err := altNode.DB.Batch(func(tx *bolt.Tx) error {
-		b := tx.Bucket(dataBucket)
-		err := b.Delete(k[:])
-		return err
-	})
-	return err
-}
-
-// Metadata represents the metadata of a (key, value) pair
-type Metadata struct {
+// PutArgs is a struct to represent the arguments of Put or DBPut
+type PutArgs struct {
 	Name       string
+	V          []byte
 	Replicants []Key
+	Success    int
 }
 
 // Put a (key, value) pair in the system
@@ -164,8 +106,6 @@ func (altNode *Node) Put(args *PutArgs, _ *struct{}) error {
 	}
 	// Else resolve in this node
 	putMDArgs := PutMetaArgs{Name: args.Name, MD: Metadata{Name: args.Name, Replicants: args.Replicants}}
-	// // Store metadata here
-	// altNode.PutMetadata(&putMDArgs, &struct{}{})
 
 	// Store in chain
 	i := 0
@@ -240,6 +180,42 @@ func (altNode *Node) Put(args *PutArgs, _ *struct{}) error {
 	return nil
 }
 
+// PutData puts the (hash(name), val) pair in DB
+func (altNode *Node) PutData(args *PutArgs, _ *struct{}) error {
+	k := StringToKey(args.Name)
+	err := altNode.DB.Batch(func(tx *bolt.Tx) error {
+		b := tx.Bucket(dataBucket)
+		err := b.Put(k[:], args.V)
+		return err
+	})
+	// if err == nil {
+	// 	log.Print("Stored pair " + args.Name + "," + string(args.V) + " key is " + k.String())
+	// }
+	return err
+}
+
+// PutMetaArgs represents the arguments of a call to PutMetadata
+type PutMetaArgs struct {
+	Name string
+	MD   Metadata
+}
+
+// PutMetadata puts the (key, val) pair in DB
+func (altNode *Node) PutMetadata(args *PutMetaArgs, _ *struct{}) error {
+	k := StringToKey(args.Name)
+	// Serialize replicants
+	md := serialize(args.MD)
+	err := altNode.DB.Batch(func(tx *bolt.Tx) error {
+		b := tx.Bucket(metaDataBucket)
+		err := b.Put(k[:], md)
+		return err
+	})
+	// if err == nil {
+	// 	log.Print("Stored metadata for " + args.Name + ", key is " + k.String())
+	// }
+	return err
+}
+
 // RePutArgs are areguments for a call to RePut
 type RePutArgs struct {
 	LeaverID Key
@@ -303,6 +279,31 @@ func (altNode *Node) undoPutMD(k Key, nodes []*Peer) error {
 	// Wrong
 	return nil
 }
+
+func (altNode *Node) rePutAllData() {
+	altNode.DB.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(dataBucket)
+		c := b.Cursor()
+
+		var wg sync.WaitGroup
+		for kslice, v := c.First(); kslice != nil; kslice, v = c.Next() {
+			var successor Peer
+			k := SliceToKey(kslice)
+			altNode.FindSuccessor(k, &successor)
+			rpArgs := RePutArgs{LeaverID: altNode.ID, K: k, V: v}
+			call := MakeAsyncCall(&successor, "RePut", rpArgs, &struct{}{})
+			go func(call *rpc.Call) {
+				reply := <-call.Done
+				checkErr("Reput failed", reply.Error)
+				wg.Done()
+			}(call)
+		}
+		wg.Wait()
+		return nil
+	})
+}
+
+/* kv-store methods for GETTING from the database */
 
 // GetMetadata returns the metadata (serialized) of a specific variable
 func (altNode *Node) GetMetadata(k Key, md *[]byte) error {
@@ -408,19 +409,22 @@ func (altNode *Node) BatchPut(args BatchPutArgs, _ *struct{}) error {
 	return err
 }
 
-// bytesToMetadata converts a byte array into a metadata struct
-func bytesToMetadata(data []byte) (md Metadata) {
-	buf := bytes.NewBuffer(data)
-	dec := gob.NewDecoder(buf)
-	dec.Decode(&md)
-	return md
+// DropKeyMD Drops all metadata associated with a key
+func (altNode *Node) DropKeyMD(k *Key, _ *struct{}) error {
+	err := altNode.DB.Batch(func(tx *bolt.Tx) error {
+		b := tx.Bucket(metaDataBucket)
+		err := b.Delete(k[:])
+		return err
+	})
+	return err
 }
 
-// serialize serializes an object into an array of bytes
-func serialize(obj interface{}) []byte {
-	var buf bytes.Buffer
-	enc := gob.NewEncoder(&buf)
-	err := enc.Encode(obj)
-	checkErr("serialization failed", err)
-	return buf.Bytes()
+// DropKeyData drops all data associated with a key
+func (altNode *Node) DropKeyData(k *Key, _ *struct{}) error {
+	err := altNode.DB.Batch(func(tx *bolt.Tx) error {
+		b := tx.Bucket(dataBucket)
+		err := b.Delete(k[:])
+		return err
+	})
+	return err
 }
