@@ -34,6 +34,13 @@ func bytesToMetadata(data []byte) (md Metadata) {
 	return md
 }
 
+func unserialize(data []byte) (struc interface{}) {
+	buf := bytes.NewBuffer(data)
+	dec := gob.NewDecoder(buf)
+	dec.Decode(&struc)
+	return struc
+}
+
 // serialize serializes an object into an array of bytes
 func serialize(obj interface{}) []byte {
 	var buf bytes.Buffer

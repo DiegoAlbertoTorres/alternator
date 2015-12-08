@@ -28,15 +28,15 @@ func getPeer(e *list.Element) *Peer {
 }
 
 // FindSuccessor finds the successor of a key in the ring
-func (members *Members) FindSuccessor(key Key) (*list.Element, error) {
+func (members *Members) FindSuccessor(key Key) *list.Element {
 	// Find ID of successor
 	for e := members.List.Front(); e != nil; e = e.Next() {
 		if getPeer(e).ID.Compare(key) > 0 {
-			return e, nil
+			return e
 		}
 	}
 	// Nothing bigger in ring, successor is first node
-	return (members.List.Front()), nil
+	return members.List.Front()
 }
 
 // Insert adds a node to the members if not already there, returns true if added

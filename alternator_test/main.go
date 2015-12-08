@@ -95,6 +95,7 @@ func main() {
 			reply := <-call.Done
 			// fmt.Printf("Finished %d\n", i)
 			if reply.Error != nil {
+				fmt.Println(reply.Error)
 				fmt.Printf("PUT for %v failed\n", reply.Args.(*alt.PutArgs).Name)
 			}
 		}(call, i)
