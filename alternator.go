@@ -277,7 +277,7 @@ func (altNode *Node) checkPredecessor() {
 		}
 	case <-time.After(time.Duration(altNode.Config.HeartbeatTimeout) * time.Millisecond):
 		// Call timed out
-		fmt.Println("Predecessor stopped responding, ceasing connection")
+		// fmt.Println("Predecessor stopped responding, ceasing connection")
 		RPCClose(predecessor)
 	}
 }

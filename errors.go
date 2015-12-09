@@ -20,6 +20,9 @@ var (
 	// ErrPutFail occurs when a node fails to put the data in required amount of nodes
 	ErrPutFail = errors.New("failed to replicate in required amount of nodes")
 
+	// ErrPutChainDead occurs when the entire chain for a key is down
+	ErrPutChainDead = errors.New("the key's successor chain is completely down")
+
 	// ErrJoinFail occurs when a join request fails
 	ErrJoinFail = errors.New("join request failed")
 

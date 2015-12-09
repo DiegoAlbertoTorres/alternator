@@ -2,7 +2,7 @@ package alternator
 
 import (
 	"bytes"
-	"fmt"
+	"encoding/gob"
 	"log"
 	"net/rpc"
 	"os"
@@ -85,6 +85,10 @@ func (altNode *Node) initDB() {
 		checkBucketErr(err)
 		return nil
 	})
+
+	gob.Register(PutMDArgs{})
+	gob.Register(PutArgs{})
+
 }
 
 /* kv-store methods for PUTTING (inserting) into the database */
@@ -94,16 +98,16 @@ const (
 	pendingData
 )
 
-// pendingPut is used to store in database information on some entry that is still pending in the
+// PendingPut is used to store in database information on some entry that is still pending in the
 // kv store
-type pendingPut struct {
+type PendingPut struct {
 	Type  int
 	Peers []Key
 	Args  interface{}
 }
 
 // putPending puts the pending put in all of its pending peers
-func (altNode *Node) putPending(k Key, pending pendingPut) {
+func (altNode *Node) putPending(k Key, pending PendingPut) {
 	var successIndeces []int
 
 	// TODO: make remote calls here async
@@ -158,16 +162,16 @@ func (altNode *Node) resolvePending() {
 		c := pendMDBucket.Cursor()
 		for kslice, v := c.First(); kslice != nil; kslice, v = c.Next() {
 			k := SliceToKey(kslice)
-			pendingPut := unserialize(v).(pendingPut)
-			go altNode.putPending(k, pendingPut)
+			PendingPut := bytesToPendingPut(v)
+			go altNode.putPending(k, PendingPut)
 		}
 
 		pendDataBucket := tx.Bucket(pendingDataBucket)
 		c = pendDataBucket.Cursor()
 		for kslice, v := c.First(); kslice != nil; kslice, v = c.Next() {
 			k := SliceToKey(kslice)
-			pendingPut := unserialize(v).(pendingPut)
-			go altNode.putPending(k, pendingPut)
+			PendingPut := bytesToPendingPut(v)
+			go altNode.putPending(k, PendingPut)
 		}
 		return nil
 	})
@@ -193,28 +197,32 @@ type PutArgs struct {
 func (altNode *Node) Put(putArgs *PutArgs, _ *struct{}) error {
 	k := StringToKey(putArgs.Name)
 	var successor Peer
-	altNode.FindSuccessor(k, &successor)
 
-	// Pass the call to successor
-	if successor.ID != altNode.ID {
-		err := MakeRemoteCall(&successor, "Put", putArgs, &struct{}{})
-		if err != nil {
-			// Let someone else in chain handle, postpone telling successor
-			current := altNode.Members.Map[successor.ID].Next()
-			for i := 0; i < altNode.Config.N; i++ {
-				if current == nil {
-					current = altNode.Members.List.Front()
-				}
-				err = MakeRemoteCall(getPeer(current), "PutFallback", putArgs, &struct{}{})
-			}
-			if checkErr("Put and PutFallback failed, put unsuccessful", err) {
-				return ErrPutFail
-			}
+	// Attempt to pass the call to member of replication chain
+	chainLink := altNode.Members.FindSuccessor(k)
+	var i int
+	for i = 0; i < altNode.Config.N; i++ {
+		// Wrap around if reach rings end
+		if chainLink == nil {
+			chainLink = altNode.Members.List.Front()
 		}
-		return err
+		chainPeer := getPeer(chainLink)
+
+		// If this node is the chainLink
+		if chainPeer.ID == altNode.ID {
+			// Handle here
+			break
+		}
+		// Else try to pass the Put down the chain
+		err := MakeRemoteCall(&successor, "Put", putArgs, &struct{}{})
+		if err == nil {
+			// Done, chain took responsibility
+			return nil
+		}
+		chainLink = chainLink.Next()
 	}
 
-	// Store in chain
+	// Handle the put here
 	putMDArgs := PutMDArgs{Name: putArgs.Name,
 		MD: Metadata{Name: putArgs.Name, Replicants: putArgs.Replicants}}
 	mdWg, mdPeers, mdPendingIDs := altNode.chainPutMetadata(&putMDArgs)
@@ -224,10 +232,6 @@ func (altNode *Node) Put(putArgs *PutArgs, _ *struct{}) error {
 
 	dataWg.Wait()
 	mdWg.Wait()
-
-	for _, peer := range *dataPeers {
-		fmt.Printf("Replicated in %v\n", peer)
-	}
 
 	// Cancel puts if less than half the chain has metadata
 	if len(*mdPeers) < ((altNode.Config.N - 1) / 2) {
@@ -245,8 +249,8 @@ func (altNode *Node) Put(putArgs *PutArgs, _ *struct{}) error {
 		return ErrPutFail
 	}
 
-	pendingMDPut := pendingPut{Type: pendingMD, Peers: *mdPendingIDs, Args: putMDArgs}
-	pendingDataPut := pendingPut{Type: pendingData, Peers: *dataPendingIDs, Args: putArgs}
+	pendingMDPut := PendingPut{Type: pendingMD, Peers: *mdPendingIDs, Args: putMDArgs}
+	pendingDataPut := PendingPut{Type: pendingData, Peers: *dataPendingIDs, Args: putArgs}
 
 	altNode.DB.Batch(func(tx *bolt.Tx) error {
 		pendMDBucket := tx.Bucket(pendingMDBucket)
@@ -292,12 +296,13 @@ func (altNode *Node) putDataInReps(args *PutArgs) (*sync.WaitGroup, *[]*Peer, *[
 }
 
 func (altNode *Node) chainPutMetadata(putMDArgs *PutMDArgs) (*sync.WaitGroup, *[]*Peer, *[]Key) {
+	k := StringToKey(putMDArgs.Name)
 	successPeers := make([]*Peer, 0, altNode.Config.N)
 	failedPeerIDs := make([]Key, 0, altNode.Config.N)
 
 	i := 0
 	var mdWg sync.WaitGroup
-	for current := altNode.Members.Map[altNode.ID]; i < altNode.Config.N; current = current.Next() {
+	for current := altNode.Members.FindSuccessor(k); i < altNode.Config.N; current = current.Next() {
 		if current == nil {
 			current = altNode.Members.List.Front()
 		}
@@ -331,9 +336,9 @@ func (altNode *Node) PutData(args *PutArgs, _ *struct{}) error {
 		err := b.Put(k[:], args.V)
 		return err
 	})
-	if err == nil {
-		log.Print("Stored pair " + args.Name + "," + string(args.V) + " key is " + k.String())
-	}
+	// if err == nil {
+	// 	log.Print("Stored pair " + args.Name + "," + string(args.V) + " key is " + k.String())
+	// }
 	return err
 }
 
@@ -506,22 +511,24 @@ func (altNode *Node) Get(name string, ret *[]byte) error {
 // TODO: write chainGetData
 
 func (altNode *Node) chainGetMetadata(k Key) Metadata {
-	var successor Peer
-	var rawMD []byte
-	altNode.FindSuccessor(k, &successor)
+	// altNode.FindSuccessor(k, &successor)
 	i := 0
-	for current := altNode.Members.Map[successor.ID]; i < altNode.Config.N; current = current.Next() {
+	for current := altNode.Members.FindSuccessor(k); i < altNode.Config.N; current = current.Next() {
+		var rawMD []byte
 		if current == nil {
 			current = altNode.Members.List.Front()
 		}
-		err := MakeRemoteCall(getPeer(current), "GetMetadata", k, &rawMD)
-		if err == nil {
-			break
+		call := MakeAsyncCall(getPeer(current), "GetMetadata", k, &rawMD)
+		select {
+		case reply := <-call.Done:
+			if reply.Error == nil {
+				return bytesToMetadata(rawMD)
+			}
+		case <-time.After(500 * time.Millisecond):
 		}
 		i++
 	}
-	md := bytesToMetadata(rawMD)
-	return md
+	return Metadata{}
 }
 
 // BatchPutArgs are the arguments for a batch put

@@ -48,7 +48,7 @@ func main() {
 		exec.Command("i3-msg", "workspace", "next").Run()
 	}
 	// Start first
-	cmd := exec.Command(term, "-e", altCmd, "--port="+strconv.Itoa(ports[0]))
+	cmd := exec.Command(term, "-e", altCmd, "--port="+strconv.Itoa(ports[0]), "--fullKeys")
 	cmds = append(cmds, cmd)
 	cmd.Start()
 
@@ -70,13 +70,15 @@ func main() {
 	ids := getIDs(peers)
 	nPeers := len(peers)
 
-	// Time for ring to stabilize
-	time.Sleep(2 * time.Second)
-
 	if Config.diego {
+		time.Sleep(1 * time.Second)
 		exec.Command("i3-msg", "workspace", "prev").Run()
 	}
 
+	// Time for ring to stabilize
+	time.Sleep(10 * time.Second)
+
+	goodPuts := 0
 	var wg sync.WaitGroup
 	// Randomly generate nEntries, insert them to Node
 	for i := 0; i < Config.nEntries; i++ {
@@ -88,20 +90,28 @@ func main() {
 		args := alt.PutArgs{Name: name, V: v, Replicants: reps, Success: 0}
 		// Insert into own map for later verification
 		verificationMap[name] = v
-		call := alt.MakeAsyncCall(&peers[rand.Intn(nPeers)], "Put", &args, &struct{}{})
+		// call := alt.MakeAsyncCall(&peers[rand.Intn(nPeers)], "Put", &args, &struct{}{})
+		call := alt.MakeAsyncCall(&peers[0], "Put", &args, &struct{}{})
 		wg.Add(1)
 		go func(call *rpc.Call, i int) {
 			defer wg.Done()
-			reply := <-call.Done
-			// fmt.Printf("Finished %d\n", i)
-			if reply.Error != nil {
-				fmt.Println(reply.Error)
-				fmt.Printf("PUT for %v failed\n", reply.Args.(*alt.PutArgs).Name)
+			select {
+			case reply := <-call.Done:
+				// fmt.Printf("Finished %d\n", i)
+				if reply.Error != nil {
+					fmt.Println(reply.Error)
+					fmt.Printf("PUT for %v failed\n", reply.Args.(*alt.PutArgs).Name)
+				} else {
+					goodPuts++
+				}
+			case <-time.After(2000 * time.Millisecond):
+				fmt.Println("Timeout!")
 			}
 		}(call, i)
 	}
 
 	wg.Wait()
+	fmt.Printf("%d puts were good\n", goodPuts)
 
 	// Kill some processes
 	// fmt.Printf("There are %d cmds\n", len(cmds))
@@ -114,7 +124,7 @@ func main() {
 	// }
 
 	fmt.Println("kill some stuff!")
-	time.Sleep(10 * time.Second)
+	// time.Sleep(30 * time.Second)
 
 	// Now check each entry
 	correct := 0
