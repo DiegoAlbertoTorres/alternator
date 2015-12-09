@@ -31,6 +31,8 @@ type Config struct {
 	MemberSyncTime int
 	// Time (in ms) between heartbeats.
 	HeartbeatTime int
+	// ResolvePendingTime is the time (in ms) between attempts to resolve pending put operations.
+	ResolvePendingTime int
 	// Time (in ms) before a heartbeat times out.
 	HeartbeatTimeout int
 	// PutMDTimeout is the time (in ms) before a PutMD times out.
@@ -44,6 +46,9 @@ type Config struct {
 	// CPUProfile is true if profiling is enabled.
 	CPUProfile bool
 }
+
+// To avoid passing to methods not belonging to altNode
+var fullKeys = false
 
 // Node is a member of the DHT. All methods belonging to Node that are exported are also accessible
 // through RPC (hence the arguments to exported methods are always those required by the rpc
@@ -79,6 +84,10 @@ func InitNode(conf Config, port string, address string) {
 	node.Members.Init()
 	node.initDB()
 
+	if node.Config.FullKeys {
+		fullKeys = true
+	}
+
 	// Join a ring if address is specified
 	if address != "" {
 		// We do not know the ID of the node connecting to, use stand-in
@@ -96,6 +105,7 @@ func InitNode(conf Config, port string, address string) {
 	wg.Add(1)
 	go node.autoCheckPredecessor()
 	go node.autoSyncMembers()
+	go node.autoResolvePending()
 	go node.sigHandler()
 
 	if node.Config.CPUProfile {
@@ -135,7 +145,8 @@ func (altNode *Node) JoinRequest(other *Peer, ret *JoinRequestArgs) error {
 	newEntry := histEntry{Time: time.Now(), Class: histJoin, Node: *other}
 	altNode.insertToHistory(newEntry)
 	altNode.Members.Insert(other)
-	fmt.Println("Members changed:", altNode.Members)
+	fmt.Println("Members changed:")
+	fmt.Println(altNode.Members)
 	ret.Keys = keys
 	ret.Vals = vals
 	return nil
@@ -180,7 +191,8 @@ func (altNode *Node) LeaveRequest(args *LeaveRequestArgs, _ *struct{}) error {
 	altNode.BatchPut(batchArgs, &struct{}{})
 	altNode.insertToHistory(args.DepartureEntry)
 	altNode.Members.Remove(&args.DepartureEntry.Node)
-	fmt.Println("Members changed:", altNode.Members)
+	fmt.Println("Members changed:")
+	fmt.Println(altNode.Members)
 
 	// Replicate in one more
 	err := MakeRemoteCall(altNode.getNthSuccessor(altNode.Config.N-1), "BatchPut", batchArgs, &struct{}{})
@@ -231,8 +243,8 @@ func (altNode *Node) createRing() {
 func (altNode *Node) syncMembers(peer *Peer) {
 	if changes := altNode.syncMemberHist(peer); changes {
 		altNode.rebuildMembers()
-		fmt.Println("Members changed:", altNode.Members)
-		// fmt.Println("Members are ", altNode.Members)
+		fmt.Println("Members changed:")
+		fmt.Println(altNode.Members)
 	}
 }
 
@@ -265,7 +277,7 @@ func (altNode *Node) checkPredecessor() {
 		}
 	case <-time.After(time.Duration(altNode.Config.HeartbeatTimeout) * time.Millisecond):
 		// Call timed out
-		fmt.Println("Predecessor stopped responding, ceasing connection")
+		// fmt.Println("Predecessor stopped responding, ceasing connection")
 		RPCClose(predecessor)
 	}
 }
@@ -274,9 +286,9 @@ func (altNode *Node) checkPredecessor() {
 
 // FindSuccessor sets 'ret' to the successor of a key 'k' in the ring
 func (altNode *Node) FindSuccessor(k Key, ret *Peer) error {
-	succ, err := altNode.Members.FindSuccessor(k)
+	succ := altNode.Members.FindSuccessor(k)
 	*ret = *getPeer(succ)
-	return err
+	return nil
 }
 
 func (altNode *Node) rebuildMembers() {

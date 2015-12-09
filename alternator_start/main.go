@@ -30,6 +30,7 @@ func main() {
 	flag.StringVar(&joinPort, "join", "0", "joins the ring that the node at [address]:[port] belongs to.")
 	flag.IntVar(&config.MemberSyncTime, "memberSyncTime", 400, "sets the time between membership syncs with a random node.")
 	flag.IntVar(&config.HeartbeatTime, "heartbeatTime", 1000, "sets the amount of time between timeouts.")
+	flag.IntVar(&config.ResolvePendingTime, "resolvePendingtime", 10000, "sets the amount of time (in ms) between attempts to resolve pending put operations.")
 	flag.IntVar(&config.HeartbeatTimeout, "heartbeatTimeout", 400, "sets the amount of time before a heartbeat times out.")
 	flag.IntVar(&config.PutMDTimeout, "putMDTimeout", 2000, "sets the amount of time before a PutMD times out.")
 	flag.IntVar(&config.PutDataTimeout, "putDataTimeout", 2000, "sets the amount of time before a PutData times out.")

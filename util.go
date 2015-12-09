@@ -34,6 +34,13 @@ func bytesToMetadata(data []byte) (md Metadata) {
 	return md
 }
 
+func bytesToPendingPut(data []byte) (pp PendingPut) {
+	buf := bytes.NewBuffer(data)
+	dec := gob.NewDecoder(buf)
+	dec.Decode(&pp)
+	return pp
+}
+
 // serialize serializes an object into an array of bytes
 func serialize(obj interface{}) []byte {
 	var buf bytes.Buffer

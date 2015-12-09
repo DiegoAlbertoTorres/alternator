@@ -72,9 +72,9 @@ func RandomKey() Key {
 
 func (k Key) String() string {
 	keyOut := k[0:10]
-	// if Config.fullKeys {
-	// 	keyOut = k[:]
-	// }
+	if fullKeys {
+		keyOut = k[:]
+	}
 	// Only first ten characters for simplicity's sake
 	return fmt.Sprintf(k.XColor()+"%x\x1b[0m", keyOut)
 }
