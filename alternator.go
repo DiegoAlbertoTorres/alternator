@@ -1,6 +1,6 @@
 // Package alternator implements a distributed, fault-tolerant hash table. Node nodes arrange
 // themselves into a ring, where each node maintains a complete membership list, which is kept
-// up-to-date by distributing membership changes (as a history) by a gossip algorithm. Node's
+// up-to-date by distributing membership changes (as a history) by a gossip algorithm. Alternator's
 // main feature is that the nodes that replicate any given entry in the DHT can be selected
 // arbitrarily, allowing users to localize data in nodes that have features best suited for
 // processing or storing that data.
@@ -11,15 +11,12 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"sync"
-
-	// _ "net/http/pprof" // Uncomment for profiling
 	"net/rpc"
 	"os"
 	"os/signal"
 	"runtime"
-	// "runtime/pprof"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -59,7 +56,7 @@ type Node struct {
 	Port        string
 	Members     Members
 	MemberHist  history
-	DB          *DB
+	DB          *dB
 	Config      Config
 	RPCListener net.Listener
 }
@@ -273,12 +270,12 @@ func (altNode *Node) checkPredecessor() {
 	case err := <-c:
 		// Something wrong
 		if (err != nil) || (beat != "OK") {
-			RPCClose(predecessor)
+			rpcClose(predecessor)
 		}
 	case <-time.After(time.Duration(altNode.Config.HeartbeatTimeout) * time.Millisecond):
 		// Call timed out
 		// fmt.Println("Predecessor stopped responding, ceasing connection")
-		RPCClose(predecessor)
+		rpcClose(predecessor)
 	}
 }
 

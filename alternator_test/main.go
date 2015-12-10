@@ -1,3 +1,5 @@
+// package alternator_test implements a test for alternator. Note that it also takes care of
+// creating a ring by calling the alternator binary, meaning that testing is completely automated.
 package main
 
 import (
@@ -26,7 +28,7 @@ var Config struct {
 	nEntries int
 }
 
-var altCmd = "alternator_start"
+var altCmd = "alternator"
 
 func main() {
 	flag.BoolVar(&Config.diego, "diego", false, "assumes diego's linux environment, which has nice properties ;)")

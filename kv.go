@@ -26,12 +26,12 @@ type Metadata struct {
 /* Database struct and methods */
 
 // DB is a wrapper around bolt's DB struct, so that methods can be added
-type DB struct {
+type dB struct {
 	*bolt.DB
 }
 
 // getMDRange returns all key,value pairs in a given key range
-func (db *DB) getMDRange(min, max Key) ([]Key, [][]byte) {
+func (db *dB) getMDRange(min, max Key) ([]Key, [][]byte) {
 	var keys []Key
 	var vals [][]byte
 
@@ -55,7 +55,7 @@ func (db *DB) getMDRange(min, max Key) ([]Key, [][]byte) {
 }
 
 // close closes the db
-func (db *DB) close() {
+func (db *dB) close() {
 	db.Close()
 }
 
@@ -64,7 +64,7 @@ func (altNode *Node) initDB() {
 	err := os.MkdirAll(altNode.Config.DotPath, 0777)
 	checkFatal("failed to make db path", err)
 	boltdb, err := bolt.Open(altNode.Config.DotPath+altNode.Port+".db", 0600, nil)
-	altNode.DB = &DB{boltdb}
+	altNode.DB = &dB{boltdb}
 	checkFatal("failed to open .db file", err)
 
 	checkBucketErr := func(err error) {
@@ -364,7 +364,7 @@ func (altNode *Node) PutMetadata(args *PutMDArgs, _ *struct{}) error {
 	return err
 }
 
-// RePutArgs are areguments for a call to RePut
+// RePutArgs are arguments for a call to RePut
 type RePutArgs struct {
 	LeaverID Key
 	K        Key

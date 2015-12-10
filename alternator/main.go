@@ -1,6 +1,8 @@
-// package alternator_start is a launcher for a single alternator node. It takes command line
-// arguments to use as the node's configuration. It can also be used as a command line tool to
-// make RPC calls to existing nodes.
+// package alternator compiles to a binary that launches a single alternator node. It takes command
+// line arguments to use as the node's configuration. It can also be used as a command line tool to
+// make RPC calls to existing nodes, although this is not the recommended way of interfacing with
+// alternator, instead you should import the alternator library, the same way alternator_test
+// package does.
 package main
 
 import (

@@ -12,7 +12,8 @@ type Members struct {
 	Map map[Key]*list.Element
 }
 
-// Init initializes a members struct
+// Init initializes a Members struct. It must be called before any other call
+// to a Members method.
 func (members *Members) Init() {
 	members.List = list.New()
 	members.Map = make(map[Key]*list.Element)

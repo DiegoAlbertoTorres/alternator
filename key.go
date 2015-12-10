@@ -24,12 +24,8 @@ var MaxKey = SliceToKey(maxSlice)
 // MinKey is the lowest possible key
 var MinKey = SliceToKey(minSlice)
 
-// Key is the sha1sum of a value
+// Key is a sha1 hash. A key is used as the primary of the consistent hashing scheme.
 type Key [sha1.Size]byte
-
-func init() {
-	rand.Seed(500)
-}
 
 // Compare compares two keys, behaves just like bytes.Compare
 func (k Key) Compare(other Key) int {
@@ -76,11 +72,11 @@ func (k Key) String() string {
 		keyOut = k[:]
 	}
 	// Only first ten characters for simplicity's sake
-	return fmt.Sprintf(k.XColor()+"%x\x1b[0m", keyOut)
+	return fmt.Sprintf(k.xColor()+"%x\x1b[0m", keyOut)
 }
 
-// XColor creates terminal truecolor escape sequence for the given key
-func (k Key) XColor() string {
+// xColor creates terminal truecolor escape sequence for the given key
+func (k Key) xColor() string {
 	if len(k) < 1 {
 		return ""
 	}
