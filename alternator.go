@@ -379,8 +379,10 @@ func (altNode *Node) syncMemberHist(peer *Peer) bool {
 		return false
 	}
 
-	var changes bool
-	altNode.MemberHist, changes = mergeHistories(altNode.MemberHist, peerHist)
+	merged, changes := mergeHistories(altNode.MemberHist, peerHist)
+	altNode.historyMutex.Lock()
+	altNode.MemberHist = merged
+	altNode.historyMutex.Unlock()
 	return changes
 }
 
@@ -422,7 +424,9 @@ func (altNode *Node) GetMembers(_ struct{}, ret *[]Peer) error {
 
 // GetMemberHist returns the node's membership history
 func (altNode *Node) GetMemberHist(_ struct{}, ret *[]histEntry) error {
+	altNode.historyMutex.RLock()
 	*ret = altNode.MemberHist
+	altNode.historyMutex.RUnlock()
 	return nil
 }
 
