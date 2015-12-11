@@ -11,18 +11,3 @@ func (peerNode Peer) String() (str string) {
 	// str += "Address: " + peerNode.Address + "\n"
 	return
 }
-
-// Unresolved: why does this not need to be an actual copy?
-func peerNodeCopy(src *Peer, dst *Peer) {
-	// fmt.Println("copying this " + keyToString(src.ID))
-	// fmt.Printf("copied %d\n", copy(dst.ID, src.ID))
-	dst.ID = src.ID
-	dst.Address = src.Address
-}
-
-func peerCompare(a *Peer, b *Peer) bool {
-	if (a.ID == b.ID) && (a.Address == b.Address) {
-		return true
-	}
-	return false
-}

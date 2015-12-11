@@ -112,7 +112,11 @@ func (altNode *Node) putPending(k Key, pending PendingPut) {
 
 	// TODO: make remote calls here async
 	for i, ownerID := range pending.Peers {
+
+		altNode.membersMutex.RLock()
 		owner := getPeer(altNode.Members.Map[ownerID])
+		altNode.membersMutex.RUnlock()
+
 		if owner == nil {
 			// Remove from Peers, node left
 			successIndeces = append(successIndeces, i)
@@ -197,10 +201,10 @@ type PutArgs struct {
 func (altNode *Node) Put(putArgs *PutArgs, _ *struct{}) error {
 	k := StringToKey(putArgs.Name)
 	var successor Peer
+	var i int
 
 	// Attempt to pass the call to member of replication chain
-	chainLink := altNode.Members.FindSuccessor(k)
-	var i int
+	chainLink := altNode.findListSuccessor(k)
 	for i = 0; i < altNode.Config.N; i++ {
 		// Wrap around if reach rings end
 		if chainLink == nil {
@@ -270,7 +274,10 @@ func (altNode *Node) putDataInReps(args *PutArgs) (*sync.WaitGroup, *[]*Peer, *[
 	failedPeerIDs := make([]Key, 0, len(args.Replicants))
 
 	for _, repID := range args.Replicants {
+		altNode.membersMutex.RLock()
 		repLNode, ok := altNode.Members.Map[repID]
+		altNode.membersMutex.RUnlock()
+
 		if !ok {
 			log.Print("Members map wrong error")
 			continue
@@ -302,6 +309,7 @@ func (altNode *Node) chainPutMetadata(putMDArgs *PutMDArgs) (*sync.WaitGroup, *[
 
 	i := 0
 	var mdWg sync.WaitGroup
+	altNode.membersMutex.RLock()
 	for current := altNode.Members.FindSuccessor(k); i < altNode.Config.N; current = current.Next() {
 		if current == nil {
 			current = altNode.Members.List.Front()
@@ -325,6 +333,7 @@ func (altNode *Node) chainPutMetadata(putMDArgs *PutMDArgs) (*sync.WaitGroup, *[
 		}(call)
 		i++
 	}
+	altNode.membersMutex.RUnlock()
 	return &mdWg, &successPeers, &failedPeerIDs
 }
 
@@ -374,9 +383,10 @@ type RePutArgs struct {
 // RePut redoes a Put
 func (altNode *Node) RePut(args *RePutArgs, _ *struct{}) error {
 	// var successor Peer
-	successor := altNode.getNthSuccessor(1)
+	successorLNode := altNode.getListSuccessor()
+	successor := getPeer(successorLNode)
 	if successor.ID == args.LeaverID {
-		successor = altNode.getNthSuccessor(2)
+		successor = getPeer(successorLNode.Next())
 		if successor.ID == args.LeaverID {
 			log.Print("Cannot do RePut, successor leaving")
 			return ErrRePutFail
@@ -392,7 +402,9 @@ func (altNode *Node) RePut(args *RePutArgs, _ *struct{}) error {
 			var randomID Key
 			// Get some random, different ID
 			for {
+				altNode.membersMutex.RLock()
 				randomID = altNode.Members.GetRandom().ID
+				altNode.membersMutex.RUnlock()
 				if randomID != md.Replicants[i] {
 					break
 				}
@@ -491,7 +503,9 @@ func (altNode *Node) Get(name string, ret *[]byte) error {
 
 	// Get data from some replicant
 	for _, repID := range md.Replicants {
+		altNode.membersMutex.RLock()
 		rep := getPeer(altNode.Members.Map[repID])
+		altNode.membersMutex.RUnlock()
 		// In case rep left
 		// TODO: this occurs because when replicants leave, nobody re-replicates their data
 		if rep == nil {
@@ -513,7 +527,8 @@ func (altNode *Node) Get(name string, ret *[]byte) error {
 func (altNode *Node) chainGetMetadata(k Key) Metadata {
 	// altNode.FindSuccessor(k, &successor)
 	i := 0
-	for current := altNode.Members.FindSuccessor(k); i < altNode.Config.N; current = current.Next() {
+	current := altNode.Members.FindSuccessor(k)
+	for ; i < altNode.Config.N; current = current.Next() {
 		var rawMD []byte
 		if current == nil {
 			current = altNode.Members.List.Front()

@@ -7,6 +7,7 @@
 package alternator
 
 import (
+	"container/list"
 	"fmt"
 	"log"
 	"net"
@@ -51,14 +52,16 @@ var fullKeys = false
 // through RPC (hence the arguments to exported methods are always those required by the rpc
 // package)
 type Node struct {
-	ID          Key
-	Address     string
-	Port        string
-	Members     Members
-	MemberHist  history
-	DB          *dB
-	Config      Config
-	RPCListener net.Listener
+	ID           Key
+	Address      string
+	Port         string
+	Members      Members
+	MemberHist   history
+	DB           *dB
+	Config       Config
+	RPCListener  net.Listener
+	membersMutex sync.RWMutex
+	historyMutex sync.RWMutex
 }
 
 // InitNode initializes a new node (constructor).
@@ -141,9 +144,16 @@ func (altNode *Node) JoinRequest(other *Peer, ret *JoinRequestArgs) error {
 	// Add join to history
 	newEntry := histEntry{Time: time.Now(), Class: histJoin, Node: *other}
 	altNode.insertToHistory(newEntry)
+
+	altNode.membersMutex.Lock()
 	altNode.Members.Insert(other)
+	altNode.membersMutex.Unlock()
+
 	fmt.Println("Members changed:")
+	altNode.membersMutex.RLock()
 	fmt.Println(altNode.Members)
+	altNode.membersMutex.RUnlock()
+
 	ret.Keys = keys
 	ret.Vals = vals
 	return nil
@@ -187,9 +197,15 @@ func (altNode *Node) LeaveRequest(args *LeaveRequestArgs, _ *struct{}) error {
 	batchArgs := BatchPutArgs{metaDataBucket, args.Keys, args.Vals}
 	altNode.BatchPut(batchArgs, &struct{}{})
 	altNode.insertToHistory(args.DepartureEntry)
+
+	altNode.membersMutex.Lock()
 	altNode.Members.Remove(&args.DepartureEntry.Node)
+	altNode.membersMutex.Unlock()
+
 	fmt.Println("Members changed:")
+	altNode.membersMutex.RLock()
 	fmt.Println(altNode.Members)
+	altNode.membersMutex.RUnlock()
 
 	// Replicate in one more
 	err := MakeRemoteCall(altNode.getNthSuccessor(altNode.Config.N-1), "BatchPut", batchArgs, &struct{}{})
@@ -234,14 +250,19 @@ func (altNode *Node) createRing() {
 	// Add own join to ring
 	self := altNode.selfExt()
 	altNode.insertToHistory(histEntry{Time: time.Now(), Class: histJoin, Node: self})
+
+	altNode.membersMutex.Lock()
 	altNode.Members.Insert(&self)
+	altNode.membersMutex.Unlock()
 }
 
 func (altNode *Node) syncMembers(peer *Peer) {
 	if changes := altNode.syncMemberHist(peer); changes {
 		altNode.rebuildMembers()
 		fmt.Println("Members changed:")
+		altNode.membersMutex.RLock()
 		fmt.Println(altNode.Members)
+		altNode.membersMutex.RUnlock()
 	}
 }
 
@@ -283,9 +304,23 @@ func (altNode *Node) checkPredecessor() {
 
 // FindSuccessor sets 'ret' to the successor of a key 'k' in the ring
 func (altNode *Node) FindSuccessor(k Key, ret *Peer) error {
+	altNode.membersMutex.RLock()
 	succ := altNode.Members.FindSuccessor(k)
+	altNode.membersMutex.RUnlock()
+
 	*ret = *getPeer(succ)
 	return nil
+}
+
+// fingListSuccessor is similar to 'FindSuccessor', except that it returns
+// a list element in altNode.Members.List, instead of the value of the
+// element.
+func (altNode *Node) findListSuccessor(k Key) *list.Element {
+	altNode.membersMutex.RLock()
+	succ := altNode.Members.FindSuccessor(k)
+	altNode.membersMutex.RUnlock()
+
+	return succ
 }
 
 func (altNode *Node) rebuildMembers() {
@@ -301,7 +336,9 @@ func (altNode *Node) rebuildMembers() {
 			newMembers.Remove(&entry.Node)
 		}
 	}
+	altNode.membersMutex.Lock()
 	altNode.Members = newMembers
+	altNode.membersMutex.Unlock()
 }
 
 /* Background task functions */
@@ -309,7 +346,10 @@ func (altNode *Node) rebuildMembers() {
 // autoSyncMembers automatically syncs members with a random node
 func (altNode *Node) autoSyncMembers() {
 	for {
+		altNode.membersMutex.RLock()
 		random := altNode.Members.GetRandom()
+		altNode.membersMutex.RUnlock()
+
 		altNode.syncMembers(random)
 		// altNode.printHist()
 		time.Sleep(time.Duration(altNode.Config.MemberSyncTime) * time.Millisecond)
@@ -325,7 +365,7 @@ func (altNode *Node) autoCheckPredecessor() {
 
 /* Utility functions, not exported */
 
-// syncMemberHist synchronizes the node's member history with an peer node
+// syncMemberHist synchronizes the node's member history with a peer node
 func (altNode *Node) syncMemberHist(peer *Peer) bool {
 	if peer == nil {
 		return false
@@ -344,7 +384,9 @@ func (altNode *Node) syncMemberHist(peer *Peer) bool {
 
 // insertToHistory inserts an entry to the node's history
 func (altNode *Node) insertToHistory(entry histEntry) {
+	altNode.historyMutex.Lock()
 	altNode.MemberHist.InsertEntry(entry)
+	altNode.historyMutex.Unlock()
 }
 
 // sigHandler catches signals sent to the node
@@ -367,9 +409,11 @@ func (altNode *Node) sigHandler() {
 // GetMembers returns an array of peers with all the members in the ring
 func (altNode *Node) GetMembers(_ struct{}, ret *[]Peer) error {
 	var members []Peer
+	altNode.membersMutex.RLock()
 	for current := altNode.Members.List.Front(); current != nil; current = current.Next() {
 		members = append(members, *getPeer(current))
 	}
+	altNode.membersMutex.RUnlock()
 	*ret = members
 	return nil
 }
@@ -381,25 +425,40 @@ func (altNode *Node) GetMemberHist(_ struct{}, ret *[]histEntry) error {
 }
 
 func (altNode *Node) getSuccessor() *Peer {
+	altNode.membersMutex.RLock()
 	succElt := altNode.Members.Map[altNode.ID]
 	succElt = succElt.Next()
 	if succElt == nil {
 		succElt = altNode.Members.List.Front()
 	}
+	altNode.membersMutex.RUnlock()
 	return getPeer(succElt)
 }
 
+func (altNode *Node) getListSuccessor() *list.Element {
+	altNode.membersMutex.RLock()
+	succElt := altNode.Members.Map[altNode.ID]
+	succElt = succElt.Next()
+	if succElt == nil {
+		succElt = altNode.Members.List.Front()
+	}
+	altNode.membersMutex.RUnlock()
+	return succElt
+}
+
 func (altNode *Node) getPredecessor() *Peer {
+	altNode.membersMutex.RLock()
 	predElt := altNode.Members.Map[altNode.ID]
 	predElt = predElt.Prev()
 	if predElt == nil {
 		predElt = altNode.Members.List.Back()
 	}
+	altNode.membersMutex.RUnlock()
 	return getPeer(predElt)
 }
 
 func (altNode *Node) getNthSuccessor(n int) *Peer {
-	// var current *list.Element
+	altNode.membersMutex.RLock()
 	current := altNode.Members.Map[altNode.ID]
 	for i := 0; i < n; i++ {
 		current = current.Next()
@@ -410,10 +469,12 @@ func (altNode *Node) getNthSuccessor(n int) *Peer {
 	if current == nil {
 		current = altNode.Members.List.Front()
 	}
+	altNode.membersMutex.RUnlock()
 	return getPeer(current)
 }
 
 func (altNode *Node) getNthPredecessor(n int) *Peer {
+	altNode.membersMutex.RLock()
 	current := altNode.Members.Map[altNode.ID]
 	for i := 0; i < n; i++ {
 		current = current.Prev()
@@ -424,10 +485,11 @@ func (altNode *Node) getNthPredecessor(n int) *Peer {
 	if current == nil {
 		current = altNode.Members.List.Back()
 	}
+	altNode.membersMutex.RUnlock()
 	return getPeer(current)
 }
 
-func (altNode Node) string() (str string) {
+func (altNode *Node) string() (str string) {
 	str += "ID: " + altNode.ID.String() + "\n"
 	return
 }

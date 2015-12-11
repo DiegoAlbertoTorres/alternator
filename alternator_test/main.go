@@ -35,8 +35,8 @@ func main() {
 	flag.IntVar(&Config.nEntries, "entries", 100, "number of entries to be inserted")
 	flag.Parse()
 
-	ports := []int{38650, 34001, 50392, 43960, 56083, 54487, 56043, 33846}
-	// ports := []int{38650, 50392, 56083, 56043}
+	// ports := []int{38650, 34001, 50392, 43960, 56083, 54487, 56043, 33846}
+	ports := []int{38650, 50392, 56083, 56043}
 	// ports := []int{38650, 33846}
 	// nPeers := len(ports)
 	// ids := makeIDs(ports)

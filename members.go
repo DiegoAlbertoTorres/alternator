@@ -8,8 +8,7 @@ import (
 // Members stores the members of a node
 type Members struct {
 	List *list.List
-	// Slice []*Peer
-	Map map[Key]*list.Element
+	Map  map[Key]*list.Element
 }
 
 // Init initializes a Members struct. It must be called before any other call
@@ -59,8 +58,7 @@ func (members *Members) Insert(peer *Peer) *list.Element {
 		if peer.ID.Compare(current.ID) == 0 {
 			return nil
 		} else if (peer.ID.Compare(prevID) > 0) && (peer.ID.Compare(current.ID) < 0) {
-			// Correct spot to add, add to list, slice and map
-			// members.sliceInsert(peer, i)
+			// Correct spot to add, add to list and map
 			e := members.List.InsertBefore(peer, e)
 			members.Map[peer.ID] = e
 			return e
@@ -68,7 +66,6 @@ func (members *Members) Insert(peer *Peer) *list.Element {
 		i++
 	}
 	// Append at end if not in members and not added by loop
-	// members.sliceInsert(peer, 0)
 	e := members.List.PushBack(peer)
 	members.Map[peer.ID] = e
 	return e
@@ -93,26 +90,8 @@ func (members Members) String() (str string) {
 	return
 }
 
-// Compares member table to neighbors, adds new
-// func (altNode *Node) updateMembers() {
-// 	var successorMembers []*Peer
-// 	// Get successors members
-// 	if altNode.Successor != nil {
-// 		MakeRemoteCall(altNode.Successor, "GetMembers", struct{}{}, &successorMembers)
-// 	}
-//
-// 	for _, member := range successorMembers {
-// 		altNode.Members.AddIfMissing(member)
-// 		// elem := altNode.Members.AddIfMissing(member)
-// 		// if elem != nil {
-// 		// 	// Send this node the keys that belong to it
-// 		// 	altNode.expelForeignKeys(elem)
-// 		// }
-// 	}
-// }
-
 // GetRandom returns a random member from the ring
-func (members Members) GetRandom() *Peer {
+func (members *Members) GetRandom() *Peer {
 	// i := 0
 	// random := rand.Intn(len(members.Map))
 	// for _, member := range members.Map {
