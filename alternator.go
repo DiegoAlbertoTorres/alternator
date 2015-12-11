@@ -56,12 +56,13 @@ type Node struct {
 	Address      string
 	Port         string
 	Members      Members
+	membersMutex sync.RWMutex
 	MemberHist   history
+	historyMutex sync.RWMutex
 	DB           *dB
 	Config       Config
 	RPCListener  net.Listener
-	membersMutex sync.RWMutex
-	historyMutex sync.RWMutex
+	rpcServ      RPCService
 }
 
 // InitNode initializes a new node (constructor).
@@ -83,6 +84,7 @@ func InitNode(conf Config, port string, address string) {
 	node.Config = conf
 	node.Members.Init()
 	node.initDB()
+	node.rpcServ.Init()
 
 	if node.Config.FullKeys {
 		fullKeys = true
@@ -163,14 +165,14 @@ func (altNode *Node) JoinRequest(other *Peer, ret *JoinRequestArgs) error {
 func (altNode *Node) joinRing(broker *Peer) error {
 	var successor Peer
 	// Find future successor using some broker in ring
-	err := MakeRemoteCall(broker, "FindSuccessor", altNode.ID, &successor)
+	err := altNode.rpcServ.MakeRemoteCall(broker, "FindSuccessor", altNode.ID, &successor)
 	if err != nil {
 		return ErrJoinFail
 	}
 
 	// Do join through future successor
 	var kvPairs JoinRequestArgs
-	err = MakeRemoteCall(&successor, "JoinRequest", altNode.selfExt(), &kvPairs)
+	err = altNode.rpcServ.MakeRemoteCall(&successor, "JoinRequest", altNode.selfExt(), &kvPairs)
 	if err != nil {
 		return ErrJoinFail
 	}
@@ -208,7 +210,7 @@ func (altNode *Node) LeaveRequest(args *LeaveRequestArgs, _ *struct{}) error {
 	altNode.membersMutex.RUnlock()
 
 	// Replicate in one more
-	err := MakeRemoteCall(altNode.getNthSuccessor(altNode.Config.N-1), "BatchPut", batchArgs, &struct{}{})
+	err := altNode.rpcServ.MakeRemoteCall(altNode.getNthSuccessor(altNode.Config.N-1), "BatchPut", batchArgs, &struct{}{})
 	checkErr("Unhandled error", err)
 	return nil
 }
@@ -234,7 +236,7 @@ func (altNode *Node) leaveRing() error {
 
 	var err error
 	// Leave by notifying successor
-	err = MakeRemoteCall(successor, "LeaveRequest", &args, &struct{}{})
+	err = altNode.rpcServ.MakeRemoteCall(successor, "LeaveRequest", &args, &struct{}{})
 	if err != nil {
 		return ErrLeaveFail
 	}
@@ -283,7 +285,7 @@ func (altNode *Node) checkPredecessor() {
 	c := make(chan error, 1)
 	beat := ""
 	go func() {
-		c <- MakeRemoteCall(predecessor, "Heartbeat", struct{}{}, &beat)
+		c <- altNode.rpcServ.MakeRemoteCall(predecessor, "Heartbeat", struct{}{}, &beat)
 	}()
 
 	// TODO: do something smart with heartbeat failures to autodetect departures
@@ -291,12 +293,12 @@ func (altNode *Node) checkPredecessor() {
 	case err := <-c:
 		// Something wrong
 		if (err != nil) || (beat != "OK") {
-			rpcClose(predecessor)
+			altNode.rpcServ.rpcClose(predecessor)
 		}
 	case <-time.After(time.Duration(altNode.Config.HeartbeatTimeout) * time.Millisecond):
 		// Call timed out
 		// fmt.Println("Predecessor stopped responding, ceasing connection")
-		rpcClose(predecessor)
+		altNode.rpcServ.rpcClose(predecessor)
 	}
 }
 
@@ -372,7 +374,7 @@ func (altNode *Node) syncMemberHist(peer *Peer) bool {
 	}
 	var peerHist history
 
-	err := MakeRemoteCall(peer, "GetMemberHist", struct{}{}, &peerHist)
+	err := altNode.rpcServ.MakeRemoteCall(peer, "GetMemberHist", struct{}{}, &peerHist)
 	if err != nil {
 		return false
 	}

@@ -124,14 +124,14 @@ func (altNode *Node) putPending(k Key, pending PendingPut) {
 		}
 		if pending.Type == pendingMD {
 			putMDArgs := pending.Args.(PutMDArgs)
-			err := MakeRemoteCall(owner, "PutMetadata", &putMDArgs, &struct{}{})
+			err := altNode.rpcServ.MakeRemoteCall(owner, "PutMetadata", &putMDArgs, &struct{}{})
 			if err == nil {
 				successIndeces = append(successIndeces, i)
 			}
 
 		} else if pending.Type == pendingData {
 			putArgs := pending.Args.(PutArgs)
-			err := MakeRemoteCall(owner, "PutData", &putArgs, &struct{}{})
+			err := altNode.rpcServ.MakeRemoteCall(owner, "PutData", &putArgs, &struct{}{})
 			if err == nil {
 				successIndeces = append(successIndeces, i)
 			}
@@ -218,7 +218,7 @@ func (altNode *Node) Put(putArgs *PutArgs, _ *struct{}) error {
 			break
 		}
 		// Else try to pass the Put down the chain
-		err := MakeRemoteCall(&successor, "Put", putArgs, &struct{}{})
+		err := altNode.rpcServ.MakeRemoteCall(&successor, "Put", putArgs, &struct{}{})
 		if err == nil {
 			// Done, chain took responsibility
 			return nil
@@ -226,35 +226,47 @@ func (altNode *Node) Put(putArgs *PutArgs, _ *struct{}) error {
 		chainLink = chainLink.Next()
 	}
 
-	// Handle the put here
+	// // Handle the put here
+	// mdWg, mdPeers, mdPendingIDs := altNode.chainPutMetadata(&putMDArgs)
+	//
+	// // Put data in replicants
+	// dataWg, dataPeers, dataPendingIDs := altNode.putDataInReps(putArgs)
+	// // Handle the put here
+	// putMDArgs := PutMDArgs{Name: putArgs.Name,
+	// 	MD: Metadata{Name: putArgs.Name, Replicants: putArgs.Replicants}}
+
+	var wg sync.WaitGroup
 	putMDArgs := PutMDArgs{Name: putArgs.Name,
 		MD: Metadata{Name: putArgs.Name, Replicants: putArgs.Replicants}}
-	mdWg, mdPeers, mdPendingIDs := altNode.chainPutMetadata(&putMDArgs)
+	mdPeers := make([]*Peer, 0, altNode.Config.N)
+	mdPendingIDs := make([]Key, 0, altNode.Config.N)
 
-	// Put data in replicants
-	dataWg, dataPeers, dataPendingIDs := altNode.putDataInReps(putArgs)
+	dataPeers := make([]*Peer, 0, altNode.Config.N)
+	dataPendingIDs := make([]Key, 0, altNode.Config.N)
 
-	dataWg.Wait()
-	mdWg.Wait()
+	wg.Add(2)
+	go altNode.chainPutMetadata(&wg, &putMDArgs, &mdPeers, &mdPendingIDs)
+	go altNode.putDataInReps(&wg, putArgs, &dataPeers, &dataPendingIDs)
+	wg.Wait()
 
 	// Cancel puts if less than half the chain has metadata
-	if len(*mdPeers) < ((altNode.Config.N - 1) / 2) {
-		altNode.undoPutMD(k, *mdPeers)
-		altNode.undoPutData(k, *dataPeers)
+	if len(mdPeers) < ((altNode.Config.N - 1) / 2) {
+		altNode.undoPutMD(k, mdPeers)
+		altNode.undoPutData(k, dataPeers)
 		return ErrPutMDFail
 	}
 
 	// Undo if put does not meet success criteria
-	if ((putArgs.Success == 0) && (len(*dataPeers) != len(putArgs.Replicants))) ||
-		(len(*dataPeers) < putArgs.Success) {
+	if ((putArgs.Success == 0) && (len(dataPeers) != len(putArgs.Replicants))) ||
+		(len(dataPeers) < putArgs.Success) {
 
-		altNode.undoPutMD(k, *mdPeers)
-		altNode.undoPutData(k, *dataPeers)
+		altNode.undoPutMD(k, mdPeers)
+		altNode.undoPutData(k, dataPeers)
 		return ErrPutFail
 	}
 
-	pendingMDPut := PendingPut{Type: pendingMD, Peers: *mdPendingIDs, Args: putMDArgs}
-	pendingDataPut := PendingPut{Type: pendingData, Peers: *dataPendingIDs, Args: putArgs}
+	pendingMDPut := PendingPut{Type: pendingMD, Peers: mdPendingIDs, Args: putMDArgs}
+	pendingDataPut := PendingPut{Type: pendingData, Peers: dataPendingIDs, Args: putArgs}
 
 	altNode.DB.Batch(func(tx *bolt.Tx) error {
 		pendMDBucket := tx.Bucket(pendingMDBucket)
@@ -268,44 +280,58 @@ func (altNode *Node) Put(putArgs *PutArgs, _ *struct{}) error {
 	return nil
 }
 
-func (altNode *Node) putDataInReps(args *PutArgs) (*sync.WaitGroup, *[]*Peer, *[]Key) {
-	var dataWg sync.WaitGroup
-	successPeers := make([]*Peer, 0, len(args.Replicants))
-	failedPeerIDs := make([]Key, 0, len(args.Replicants))
+func (altNode *Node) putDataInReps(wg *sync.WaitGroup, args *PutArgs, successPeers *[]*Peer,
+	failPeerIDs *[]Key) {
+
+	successCh := make(chan *Peer, altNode.Config.N)
+	failCh := make(chan Key, altNode.Config.N)
 
 	for _, repID := range args.Replicants {
 		altNode.membersMutex.RLock()
-		repLNode, ok := altNode.Members.Map[repID]
+		currentLNode, ok := altNode.Members.Map[repID]
 		altNode.membersMutex.RUnlock()
+		current := getPeer(currentLNode)
 
 		if !ok {
 			log.Print("Members map wrong error")
 			continue
 		}
-		rep := getPeer(repLNode)
-		call := MakeAsyncCall(rep, "PutData", args, &struct{}{})
-		dataWg.Add(1)
-		go func(call *rpc.Call) {
+
+		call := altNode.rpcServ.MakeAsyncCall(current, "PutData", args, &struct{}{})
+		go func(call *rpc.Call, current *Peer) {
 			select {
 			case reply := <-call.Done:
 				if !checkErr("failed to put data in replicant", reply.Error) {
-					successPeers = append(successPeers, rep)
+					// successPeers = append(successPeers, rep)
+					successCh <- current
 				} else {
-					failedPeerIDs = append(failedPeerIDs, rep.ID)
+					// failedPeerIDs = append(failedPeerIDs, rep.ID)
+					failCh <- current.ID
 				}
-				dataWg.Done()
 			case <-time.After(time.Duration(altNode.Config.PutDataTimeout) * time.Millisecond):
-				dataWg.Done()
+				failCh <- current.ID
 			}
-		}(call)
+		}(call, current)
 	}
-	return &dataWg, &successPeers, &failedPeerIDs
+
+	for i := 0; i < altNode.Config.N; i++ {
+		select {
+		case success := <-successCh:
+			*successPeers = append(*successPeers, success)
+		case fail := <-failCh:
+			*failPeerIDs = append(*failPeerIDs, fail)
+		}
+	}
+
+	wg.Done()
 }
 
-func (altNode *Node) chainPutMetadata(putMDArgs *PutMDArgs) (*sync.WaitGroup, *[]*Peer, *[]Key) {
+func (altNode *Node) chainPutMetadata(wg *sync.WaitGroup, putMDArgs *PutMDArgs,
+	successPeers *[]*Peer, failPeerIDs *[]Key) {
+
 	k := StringToKey(putMDArgs.Name)
-	successPeers := make([]*Peer, 0, altNode.Config.N)
-	failedPeerIDs := make([]Key, 0, altNode.Config.N)
+	successCh := make(chan *Peer, altNode.Config.N)
+	failCh := make(chan Key, altNode.Config.N)
 
 	i := 0
 	var mdWg sync.WaitGroup
@@ -315,26 +341,39 @@ func (altNode *Node) chainPutMetadata(putMDArgs *PutMDArgs) (*sync.WaitGroup, *[
 			current = altNode.Members.List.Front()
 		}
 		currentPeer := getPeer(current)
-		call := MakeAsyncCall(currentPeer, "PutMetadata", &putMDArgs, &struct{}{})
+		call := altNode.rpcServ.MakeAsyncCall(currentPeer, "PutMetadata", &putMDArgs, &struct{}{})
 		mdWg.Add(1)
-		go func(call *rpc.Call) {
-			// defer mdWg.Done()
+		go func(call *rpc.Call, current *Peer) {
 			select {
 			case reply := <-call.Done:
 				if !checkErr("metadata put fail", reply.Error) {
-					successPeers = append(successPeers, currentPeer)
+					// successPeers = append(successPeers, currentPeer)
+					successCh <- currentPeer
 				} else {
-					failedPeerIDs = append(failedPeerIDs, currentPeer.ID)
+					// failedPeerIDs = append(failedPeerIDs, currentPeer.ID)
+					failCh <- currentPeer.ID
 				}
 				mdWg.Done()
 			case <-time.After(time.Duration(altNode.Config.PutMDTimeout) * time.Millisecond):
+				failCh <- currentPeer.ID
 				mdWg.Done()
 			}
-		}(call)
+		}(call, currentPeer)
 		i++
 	}
 	altNode.membersMutex.RUnlock()
-	return &mdWg, &successPeers, &failedPeerIDs
+
+	for i := 0; i < altNode.Config.N; i++ {
+		select {
+		case success := <-successCh:
+			*successPeers = append(*successPeers, success)
+		case fail := <-failCh:
+			*failPeerIDs = append(*failPeerIDs, fail)
+		}
+	}
+
+	wg.Done()
+	return
 }
 
 // PutData puts the (hash(name), val) pair in DB
@@ -416,7 +455,7 @@ func (altNode *Node) RePut(args *RePutArgs, _ *struct{}) error {
 	}
 	// Do the put again
 	putArgs := PutArgs{Name: md.Name, V: args.V, Replicants: md.Replicants, Success: 0}
-	err := MakeRemoteCall(successor, "Put", putArgs, &struct{}{})
+	err := altNode.rpcServ.MakeRemoteCall(successor, "Put", putArgs, &struct{}{})
 	checkErr("Put failed", err)
 
 	return err
@@ -425,7 +464,7 @@ func (altNode *Node) RePut(args *RePutArgs, _ *struct{}) error {
 // undoPutData undoes all data puts for a key in a set of nodes
 func (altNode *Node) undoPutData(k Key, nodes []*Peer) error {
 	for _, node := range nodes {
-		MakeRemoteCall(node, "DropKeyData", k, &struct{}{})
+		altNode.rpcServ.MakeRemoteCall(node, "DropKeyData", k, &struct{}{})
 	}
 	// Wrong
 	return nil
@@ -434,7 +473,7 @@ func (altNode *Node) undoPutData(k Key, nodes []*Peer) error {
 // undoPutMD undoes all metadata puts for a key in a set of nodes
 func (altNode *Node) undoPutMD(k Key, nodes []*Peer) error {
 	for _, node := range nodes {
-		MakeRemoteCall(node, "DropKeyMD", k, &struct{}{})
+		altNode.rpcServ.MakeRemoteCall(node, "DropKeyMD", k, &struct{}{})
 	}
 	// Wrong
 	return nil
@@ -451,7 +490,7 @@ func (altNode *Node) rePutAllData() {
 			k := SliceToKey(kslice)
 			altNode.FindSuccessor(k, &successor)
 			rpArgs := RePutArgs{LeaverID: altNode.ID, K: k, V: v}
-			call := MakeAsyncCall(&successor, "RePut", rpArgs, &struct{}{})
+			call := altNode.rpcServ.MakeAsyncCall(&successor, "RePut", rpArgs, &struct{}{})
 			go func(call *rpc.Call) {
 				reply := <-call.Done
 				checkErr("Reput failed", reply.Error)
@@ -512,7 +551,7 @@ func (altNode *Node) Get(name string, ret *[]byte) error {
 			continue
 		}
 		var result []byte
-		err := MakeRemoteCall(rep, "GetData", k, &result)
+		err := altNode.rpcServ.MakeRemoteCall(rep, "GetData", k, &result)
 		if err == nil {
 			*ret = result
 			return nil
@@ -533,7 +572,7 @@ func (altNode *Node) chainGetMetadata(k Key) Metadata {
 		if current == nil {
 			current = altNode.Members.List.Front()
 		}
-		call := MakeAsyncCall(getPeer(current), "GetMetadata", k, &rawMD)
+		call := altNode.rpcServ.MakeAsyncCall(getPeer(current), "GetMetadata", k, &rawMD)
 		select {
 		case reply := <-call.Done:
 			if reply.Error == nil {

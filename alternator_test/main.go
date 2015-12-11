@@ -62,9 +62,11 @@ func main() {
 		time.Sleep(200 * time.Millisecond)
 	}
 
+	var rpcServ alt.RPCService
+	rpcServ.Init()
 	var peers []alt.Peer
 	firstPeer := alt.Peer{ID: alt.GenID(strconv.Itoa(ports[0])), Address: "127.0.0.1:" + strconv.Itoa(ports[0])}
-	err := alt.MakeRemoteCall(&firstPeer, "GetMembers", struct{}{}, &peers)
+	err := rpcServ.MakeRemoteCall(&firstPeer, "GetMembers", struct{}{}, &peers)
 	if err != nil {
 		fmt.Println("Failed to get members from first node!")
 		os.Exit(1)
@@ -80,7 +82,6 @@ func main() {
 	// Time for ring to stabilize
 	time.Sleep(10 * time.Second)
 
-	goodPuts := 0
 	var wg sync.WaitGroup
 	// Randomly generate nEntries, insert them to Node
 	for i := 0; i < Config.nEntries; i++ {
@@ -92,8 +93,8 @@ func main() {
 		args := alt.PutArgs{Name: name, V: v, Replicants: reps, Success: 0}
 		// Insert into own map for later verification
 		verificationMap[name] = v
-		// call := alt.MakeAsyncCall(&peers[rand.Intn(nPeers)], "Put", &args, &struct{}{})
-		call := alt.MakeAsyncCall(&peers[0], "Put", &args, &struct{}{})
+		// call := alt.altNode.rpcServ.MakeAsyncCall(&peers[rand.Intn(nPeers)], "Put", &args, &struct{}{})
+		call := rpcServ.MakeAsyncCall(&peers[0], "Put", &args, &struct{}{})
 		wg.Add(1)
 		go func(call *rpc.Call, i int) {
 			defer wg.Done()
@@ -103,17 +104,15 @@ func main() {
 				if reply.Error != nil {
 					fmt.Println(reply.Error)
 					fmt.Printf("PUT for %v failed\n", reply.Args.(*alt.PutArgs).Name)
-				} else {
-					goodPuts++
 				}
-			case <-time.After(2000 * time.Millisecond):
+			case <-time.After(10000 * time.Millisecond):
 				fmt.Println("Timeout!")
 			}
 		}(call, i)
 	}
 
 	wg.Wait()
-	fmt.Printf("%d puts were good\n", goodPuts)
+	// fmt.Printf("%d puts were good\n", goodPuts)
 
 	// Kill some processes
 	// fmt.Printf("There are %d cmds\n", len(cmds))
@@ -133,7 +132,7 @@ func main() {
 	for name, v := range verificationMap {
 		var result []byte
 		for {
-			err := alt.MakeRemoteCall(&peers[rand.Intn(nPeers)], "Get", name, &result)
+			err := rpcServ.MakeRemoteCall(&peers[rand.Intn(nPeers)], "Get", name, &result)
 			if err == nil || err.Error() == alt.ErrDataLost.Error() {
 				break
 			} else {
