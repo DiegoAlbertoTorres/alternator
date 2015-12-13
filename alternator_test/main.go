@@ -3,14 +3,17 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"flag"
 	"fmt"
+	"log"
 	"math/rand"
 	"net/rpc"
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,115 +27,109 @@ var done int
 
 // Config stores configuration options globally
 var Config struct {
-	diego    bool
-	nEntries int
+	diego     bool
+	nNodes    int
+	firstPort string
 }
 
 var altCmd = "alternator"
+var rpcServ alt.RPCService
+var peers []alt.Peer
+var entryMap map[string][]byte
+var mapLock sync.RWMutex
 
 func main() {
 	flag.BoolVar(&Config.diego, "diego", false, "assumes diego's linux environment, which has nice properties ;)")
-	flag.IntVar(&Config.nEntries, "entries", 100, "number of entries to be inserted")
+	flag.IntVar(&Config.nNodes, "n", 8, "number of entries to be inserted")
+	flag.StringVar(&Config.firstPort, "first", "38650", "number of the port of the first port")
 	flag.Parse()
 
-	// ports := []int{38650, 34001, 50392, 43960, 56083, 54487, 56043, 33846}
-	ports := []int{38650, 50392, 56083, 56043}
-	// ports := []int{38650, 33846}
-	// nPeers := len(ports)
-	// ids := makeIDs(ports)
-	// peers := makePeers(ports)
-	var cmds []*exec.Cmd
+	if Config.nNodes < 1 {
+		os.Exit(1)
+	}
 
-	verificationMap := make(map[string][]byte, Config.nEntries)
 	rand.Seed(time.Now().UTC().UnixNano())
+	rpcServ.Init()
+	entryMap = make(map[string][]byte)
 
+	// Start first
 	if Config.diego {
 		exec.Command("i3-msg", "workspace", "next").Run()
 	}
-	// Start first
-	cmd := exec.Command(term, "-e", altCmd, "--port="+strconv.Itoa(ports[0]), "--fullKeys")
-	cmds = append(cmds, cmd)
-	cmd.Start()
-
-	// Launch other nodes
-	for _, port := range ports[1:] {
-		cmd = exec.Command(term, "-e", altCmd, "--join="+strconv.Itoa(ports[0]), "--port="+strconv.Itoa(port))
-		cmds = append(cmds, cmd)
-		cmd.Start()
-		time.Sleep(200 * time.Millisecond)
+	startNode("0", Config.firstPort)
+	time.Sleep(200 * time.Millisecond)
+	if Config.diego {
+		exec.Command("i3-msg", "workspace", "prev").Run()
 	}
 
-	var rpcServ alt.RPCService
-	rpcServ.Init()
+	// Launch other nodes
+	launchNodes(Config.nNodes - 1)
+	getPeers()
+
 	var peers []alt.Peer
-	firstPeer := alt.Peer{ID: alt.GenID(strconv.Itoa(ports[0])), Address: "127.0.0.1:" + strconv.Itoa(ports[0])}
+	firstPeer := alt.Peer{ID: alt.GenID(Config.firstPort), Address: "127.0.0.1:" + Config.firstPort}
 	err := rpcServ.MakeRemoteCall(&firstPeer, "GetMembers", struct{}{}, &peers)
 	if err != nil {
 		fmt.Println("Failed to get members from first node!")
 		os.Exit(1)
 	}
-	ids := getIDs(peers)
-	nPeers := len(peers)
 
-	if Config.diego {
-		time.Sleep(1 * time.Second)
-		exec.Command("i3-msg", "workspace", "prev").Run()
-	}
-
-	// Time for ring to stabilize
-	time.Sleep(10 * time.Second)
-
-	var wg sync.WaitGroup
-	// Randomly generate nEntries, insert them to Node
-	for i := 0; i < Config.nEntries; i++ {
-		name := randString(10)
-		v := []byte(randString(20))
-		reps := randomIDs(ids)
-		fmt.Printf("PUT %v, w/e in %v\n", name, reps)
-		// Insert it into Node
-		args := alt.PutArgs{Name: name, V: v, Replicants: reps, Success: 0}
-		// Insert into own map for later verification
-		verificationMap[name] = v
-		// call := alt.altNode.rpcServ.MakeAsyncCall(&peers[rand.Intn(nPeers)], "Put", &args, &struct{}{})
-		call := rpcServ.MakeAsyncCall(&peers[0], "Put", &args, &struct{}{})
-		wg.Add(1)
-		go func(call *rpc.Call, i int) {
-			defer wg.Done()
-			select {
-			case reply := <-call.Done:
-				// fmt.Printf("Finished %d\n", i)
-				if reply.Error != nil {
-					fmt.Println(reply.Error)
-					fmt.Printf("PUT for %v failed\n", reply.Args.(*alt.PutArgs).Name)
-				}
-			case <-time.After(10000 * time.Millisecond):
-				fmt.Println("Timeout!")
+	scanner := bufio.NewScanner(os.Stdin)
+	fmt.Println("Please execute a command:")
+	for scanner.Scan() {
+		args := strings.Split(scanner.Text(), " ")
+		switch args[0] {
+		case "create":
+			if len(args) < 2 {
+				fmt.Println("Usage: create [int]")
+				break
 			}
-		}(call, i)
+			n, err := strconv.Atoi(args[1])
+			if checkErr("Usage: create [int]", err) {
+				break
+			}
+			launchNodes(n)
+			time.Sleep(5000 * time.Millisecond)
+			getPeers()
+		case "insert":
+			if len(args) < 2 {
+				fmt.Println("Usage: insert [int]")
+				break
+			}
+			n, err := strconv.Atoi(args[1])
+			if checkErr("Usage: insert [int]", err) {
+				break
+			}
+			getPeers()
+			putKeys(n)
+		case "insertseq":
+			if len(args) < 2 {
+				fmt.Println("Usage: insertseq [int]")
+				break
+			}
+			n, err := strconv.Atoi(args[1])
+			if checkErr("Usage: insert [int]", err) {
+				break
+			}
+			getPeers()
+			putKeysSeq(n)
+		case "dumpdata":
+			dumpData()
+		case "dumpmeta":
+			dumpMetadata()
+		case "test":
+			testKeys()
+		}
+		fmt.Println("Please execute a command:")
 	}
+}
 
-	wg.Wait()
-	// fmt.Printf("%d puts were good\n", goodPuts)
-
-	// Kill some processes
-	// fmt.Printf("There are %d cmds\n", len(cmds))
-	// cmds = randomCmds(cmds)
-	// fmt.Printf("There are %d random cmds\n", len(cmds))
-	// for _, cmd := range cmds {
-	// 	fmt.Println("killing someone")
-	// 	cmd.Process.Signal(os.Interrupt)
-	// 	// cmd.Process.Kill()
-	// }
-
-	fmt.Println("kill some stuff!")
-	// time.Sleep(30 * time.Second)
-
-	// Now check each entry
+func testKeys() {
 	correct := 0
-	for name, v := range verificationMap {
+	for name, v := range entryMap {
 		var result []byte
 		for {
-			err := rpcServ.MakeRemoteCall(&peers[rand.Intn(nPeers)], "Get", name, &result)
+			err := rpcServ.MakeRemoteCall(&peers[rand.Intn(len(peers))], "Get", name, &result)
 			if err == nil || err.Error() == alt.ErrDataLost.Error() {
 				break
 			} else {
@@ -143,10 +140,127 @@ func main() {
 			correct++
 		}
 	}
-	fmt.Printf("%d/%d entries are correct\n", correct, Config.nEntries)
-	if correct == Config.nEntries {
+	fmt.Printf("%d/%d entries are correct\n", correct, len(entryMap))
+	if correct == len(entryMap) {
 		fmt.Println("PERFECT!")
 	}
+}
+
+func putKeysSeq(n int) {
+	rand.Seed(time.Now().UTC().UnixNano())
+	for i := 0; i < n; i++ {
+		reps := randomIDs(peers)
+		name := randString(30)
+		v := []byte(randString(30))
+		args := alt.PutArgs{Name: name, V: v, Replicants: reps, Success: 0}
+		// // Wait a bit to avoid overflowing
+		err := rpcServ.MakeRemoteCall(&peers[rand.Intn(len(peers))], "Put", &args, &struct{}{})
+		if err != nil {
+			fmt.Printf("PUT for %v failed, %v\n", name, err)
+		} else {
+			// fmt.Println("Success!")
+			entryMap[name] = v
+		}
+		fmt.Printf("Done inserting %d keys\n", n)
+	}
+}
+
+func putKeys(n int) {
+	rand.Seed(time.Now().UTC().UnixNano())
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		reps := randomIDs(peers)
+		name := randString(30)
+		v := []byte(randString(30))
+		args := alt.PutArgs{Name: name, V: v, Replicants: reps, Success: 0}
+		// // Wait a bit to avoid overflowing
+		call := rpcServ.MakeAsyncCall(&peers[rand.Intn(len(peers))], "Put", &args, &struct{}{})
+		wg.Add(1)
+		go func(call *rpc.Call) {
+			defer wg.Done()
+			select {
+			case reply := <-call.Done:
+				if reply.Error != nil {
+					fmt.Printf("PUT for %v failed, %v\n", reply.Args.(*alt.PutArgs).Name, reply.Error)
+				} else {
+					// fmt.Println("Success!")
+					mapLock.Lock()
+					entryMap[name] = v
+					mapLock.Unlock()
+				}
+			case <-time.After(5000 * time.Millisecond):
+				mapLock.Lock()
+				entryMap[name] = v
+				mapLock.Unlock()
+				fmt.Println("Timeout!")
+			}
+		}(call)
+		// time.Sleep(50 * time.Millisecond)
+	}
+	wg.Wait()
+	fmt.Printf("Done inserting %d keys\n", n)
+}
+
+func dumpData() {
+	for i := range peers {
+		rpcServ.MakeRemoteCall(&peers[i], "DumpData", struct{}{}, &struct{}{})
+	}
+}
+
+func dumpMetadata() {
+	for i := range peers {
+		rpcServ.MakeRemoteCall(&peers[i], "DumpMetadata", struct{}{}, &struct{}{})
+	}
+}
+
+func checkErr(str string, err error) bool {
+	if err != nil {
+		log.Print(str+": ", err)
+		return true
+	}
+	return false
+}
+
+func launchNodes(n int) {
+	// If on diego's machine, create on next workspace
+	if Config.diego {
+		exec.Command("i3-msg", "workspace", "next").Run()
+	}
+	// Launch other nodes
+	for i := 0; i < n; i++ {
+		startNode(Config.firstPort, "0")
+		time.Sleep(200 * time.Millisecond)
+	}
+	if Config.diego {
+		exec.Command("i3-msg", "workspace", "prev").Run()
+	}
+	return
+}
+
+func getPeers() {
+	var rpcServ alt.RPCService
+	rpcServ.Init()
+	firstPeer := alt.Peer{ID: alt.GenID(Config.firstPort), Address: "127.0.0.1:" + Config.firstPort}
+	err := rpcServ.MakeRemoteCall(&firstPeer, "GetMembers", struct{}{}, &peers)
+	if err != nil {
+		fmt.Println("Failed to get members from first node!")
+		os.Exit(1)
+	}
+}
+
+func startNode(join string, port string) {
+	args := []string{"--hold", "-e", altCmd}
+	if join != "0" {
+		args = append(args, "--join="+join)
+	}
+	if port != "0" {
+		args = append(args, "--port="+port)
+	}
+	if port == Config.firstPort {
+		// args = append(args, "--fullKeys")
+		args = append(args, "--cpuprofile")
+	}
+	exec.Command("konsole", args...).Run()
 }
 
 func randString(n int) string {
@@ -165,24 +279,18 @@ func getIDs(peers []alt.Peer) []alt.Key {
 	return ids
 }
 
-func randomIDs(ids []alt.Key) []alt.Key {
-	// rand.Seed(time.Now().UTC().UnixNano())
-	n := rand.Intn(len(ids)-1) + 1
+func randomIDs(peers []alt.Peer) []alt.Key {
+	// n := rand.Intn(2) + 1
+	n := 1
 
-	for i := len(ids) - 1; i > 0; i-- {
+	for i := len(peers) - 1; i > 0; i-- {
 		j := rand.Intn(i)
-		ids[i], ids[j] = ids[j], ids[i]
+		peers[i], peers[j] = peers[j], peers[i]
 	}
-	return ids[0:n]
-}
 
-func randomCmds(cmds []*exec.Cmd) []*exec.Cmd {
-	// rand.Seed(time.Now().UTC().UnixNano())
-	n := rand.Intn(len(cmds)-1) + 1
-
-	for i := len(cmds) - 1; i > 0; i-- {
-		j := rand.Intn(i)
-		cmds[i], cmds[j] = cmds[j], cmds[i]
+	var keys []alt.Key
+	for i := 0; i < n; i++ {
+		keys = append(keys, peers[i].ID)
 	}
-	return cmds[0:n]
+	return keys
 }
