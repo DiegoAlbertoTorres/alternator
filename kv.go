@@ -3,6 +3,7 @@ package alternator
 import (
 	"bytes"
 	"encoding/gob"
+	"fmt"
 	"log"
 	"net/rpc"
 	"os"
@@ -226,15 +227,6 @@ func (altNode *Node) Put(putArgs *PutArgs, _ *struct{}) error {
 		chainLink = chainLink.Next()
 	}
 
-	// // Handle the put here
-	// mdWg, mdPeers, mdPendingIDs := altNode.chainPutMetadata(&putMDArgs)
-	//
-	// // Put data in replicants
-	// dataWg, dataPeers, dataPendingIDs := altNode.putDataInReps(putArgs)
-	// // Handle the put here
-	// putMDArgs := PutMDArgs{Name: putArgs.Name,
-	// 	MD: Metadata{Name: putArgs.Name, Replicants: putArgs.Replicants}}
-
 	var wg sync.WaitGroup
 	putMDArgs := PutMDArgs{Name: putArgs.Name,
 		MD: Metadata{Name: putArgs.Name, Replicants: putArgs.Replicants}}
@@ -247,7 +239,9 @@ func (altNode *Node) Put(putArgs *PutArgs, _ *struct{}) error {
 	wg.Add(2)
 	go altNode.chainPutMetadata(&wg, &putMDArgs, &mdPeers, &mdPendingIDs)
 	go altNode.putDataInReps(&wg, putArgs, &dataPeers, &dataPendingIDs)
+	fmt.Println("Waiting")
 	wg.Wait()
+	fmt.Println("Here!")
 
 	// Cancel puts if less than half the chain has metadata
 	if len(mdPeers) < ((altNode.Config.N - 1) / 2) {
@@ -314,7 +308,8 @@ func (altNode *Node) putDataInReps(wg *sync.WaitGroup, args *PutArgs, successPee
 		}(call, current)
 	}
 
-	for i := 0; i < altNode.Config.N; i++ {
+	fmt.Println("Entering loop putDataInReps")
+	for i := 0; i < len(args.Replicants); i++ {
 		select {
 		case success := <-successCh:
 			*successPeers = append(*successPeers, success)
@@ -322,6 +317,7 @@ func (altNode *Node) putDataInReps(wg *sync.WaitGroup, args *PutArgs, successPee
 			*failPeerIDs = append(*failPeerIDs, fail)
 		}
 	}
+	fmt.Println("Exiting loop putDataInReps")
 
 	wg.Done()
 }
@@ -363,6 +359,7 @@ func (altNode *Node) chainPutMetadata(wg *sync.WaitGroup, putMDArgs *PutMDArgs,
 	}
 	altNode.membersMutex.RUnlock()
 
+	fmt.Println("Entering loop chainPutMetadata")
 	for i := 0; i < altNode.Config.N; i++ {
 		select {
 		case success := <-successCh:
@@ -371,6 +368,7 @@ func (altNode *Node) chainPutMetadata(wg *sync.WaitGroup, putMDArgs *PutMDArgs,
 			*failPeerIDs = append(*failPeerIDs, fail)
 		}
 	}
+	fmt.Println("Exiting loop chainPutMetadata")
 
 	wg.Done()
 	return
