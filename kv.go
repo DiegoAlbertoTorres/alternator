@@ -109,7 +109,7 @@ type PendingPut struct {
 
 // putPending puts the pending put in all of its pending peers
 func (altNode *Node) putPending(k Key, pending PendingPut) {
-	var successIndeces []int
+	successIndeces := make(map[int]struct{})
 
 	// TODO: make remote calls here async
 	for i, ownerID := range pending.Peers {
@@ -119,29 +119,41 @@ func (altNode *Node) putPending(k Key, pending PendingPut) {
 		altNode.membersMutex.RUnlock()
 
 		if owner == nil {
-			// Remove from Peers, node left
-			successIndeces = append(successIndeces, i)
+			// Remove from Peers, node no longer in members list
+			successIndeces[i] = struct{}{}
 			continue
 		}
 		if pending.Type == pendingMD {
 			putMDArgs := pending.Args.(PutMDArgs)
 			err := altNode.rpcServ.MakeRemoteCall(owner, "PutMetadata", &putMDArgs, &struct{}{})
+			k := StringToKey(putMDArgs.Name)
 			if err == nil {
-				successIndeces = append(successIndeces, i)
+				fmt.Printf("Good: md resolve, %v:%v\n", ownerID, k)
+				successIndeces[i] = struct{}{}
+			} else {
+				fmt.Printf("Bad: md resolve, %v:%v\n", ownerID, k)
 			}
 
 		} else if pending.Type == pendingData {
 			putArgs := pending.Args.(PutArgs)
 			err := altNode.rpcServ.MakeRemoteCall(owner, "PutData", &putArgs, &struct{}{})
+			k := StringToKey(putArgs.Name)
 			if err == nil {
-				successIndeces = append(successIndeces, i)
+				fmt.Printf("Good: data resolve, %v:%v\n", ownerID, k)
+				successIndeces[i] = struct{}{}
+			} else {
+				fmt.Printf("Bad: data resolve %v:%v\n", ownerID, k)
 			}
 		}
 	}
 	// Remove successfully resolved entries from the pending Peers list
-	for _, idx := range successIndeces {
-		pending.Peers = append(pending.Peers[:idx], pending.Peers[idx+1:]...)
+	var newPending []Key
+	for i := range pending.Peers {
+		if _, ok := successIndeces[i]; !ok {
+			newPending = append(newPending, pending.Peers[i])
+		}
 	}
+	pending.Peers = newPending
 
 	altNode.DB.Batch(func(tx *bolt.Tx) error {
 		var b *bolt.Bucket
@@ -239,25 +251,25 @@ func (altNode *Node) Put(putArgs *PutArgs, _ *struct{}) error {
 	wg.Add(2)
 	go altNode.chainPutMetadata(&wg, &putMDArgs, &mdPeers, &mdPendingIDs)
 	go altNode.putDataInReps(&wg, putArgs, &dataPeers, &dataPendingIDs)
-	fmt.Println("Waiting")
 	wg.Wait()
-	fmt.Println("Here!")
 
 	// Cancel puts if less than half the chain has metadata
-	if len(mdPeers) < ((altNode.Config.N - 1) / 2) {
-		altNode.undoPutMD(k, mdPeers)
-		altNode.undoPutData(k, dataPeers)
-		return ErrPutMDFail
-	}
+	// if len(mdPeers) < ((altNode.Config.N - 1) / 2) {
+	// 	altNode.undoPutMD(k, mdPeers)
+	// 	altNode.undoPutData(k, dataPeers)
+	// 	return ErrPutMDFail
+	// }
 
 	// Undo if put does not meet success criteria
-	if ((putArgs.Success == 0) && (len(dataPeers) != len(putArgs.Replicants))) ||
-		(len(dataPeers) < putArgs.Success) {
-
-		altNode.undoPutMD(k, mdPeers)
-		altNode.undoPutData(k, dataPeers)
-		return ErrPutFail
-	}
+	// if ((putArgs.Success == 0) && (len(dataPeers) != len(putArgs.Replicants))) ||
+	// 	(len(dataPeers) < putArgs.Success) {
+	//
+	// 	fmt.Printf("Success is %v, len(dataPeers) is %v, len(reps) is %v, len(fails) is %v\n", putArgs.Success, len(dataPeers), len(putArgs.Replicants), len(dataPendingIDs))
+	//
+	// 	altNode.undoPutMD(k, mdPeers)
+	// 	altNode.undoPutData(k, dataPeers)
+	// 	return ErrPutFail
+	// }
 
 	pendingMDPut := PendingPut{Type: pendingMD, Peers: mdPendingIDs, Args: putMDArgs}
 	pendingDataPut := PendingPut{Type: pendingData, Peers: dataPendingIDs, Args: putArgs}
@@ -277,7 +289,7 @@ func (altNode *Node) Put(putArgs *PutArgs, _ *struct{}) error {
 func (altNode *Node) putDataInReps(wg *sync.WaitGroup, args *PutArgs, successPeers *[]*Peer,
 	failPeerIDs *[]Key) {
 
-	successCh := make(chan *Peer, altNode.Config.N)
+	successCh := make(chan *Peer, len(args.Replicants))
 	failCh := make(chan Key, altNode.Config.N)
 
 	for _, repID := range args.Replicants {
@@ -300,15 +312,16 @@ func (altNode *Node) putDataInReps(wg *sync.WaitGroup, args *PutArgs, successPee
 					successCh <- current
 				} else {
 					// failedPeerIDs = append(failedPeerIDs, rep.ID)
+					fmt.Println("Error returned!")
 					failCh <- current.ID
 				}
 			case <-time.After(time.Duration(altNode.Config.PutDataTimeout) * time.Millisecond):
+				fmt.Println("Timeout!")
 				failCh <- current.ID
 			}
 		}(call, current)
 	}
 
-	fmt.Println("Entering loop putDataInReps")
 	for i := 0; i < len(args.Replicants); i++ {
 		select {
 		case success := <-successCh:
@@ -317,7 +330,6 @@ func (altNode *Node) putDataInReps(wg *sync.WaitGroup, args *PutArgs, successPee
 			*failPeerIDs = append(*failPeerIDs, fail)
 		}
 	}
-	fmt.Println("Exiting loop putDataInReps")
 
 	wg.Done()
 }
@@ -359,7 +371,6 @@ func (altNode *Node) chainPutMetadata(wg *sync.WaitGroup, putMDArgs *PutMDArgs,
 	}
 	altNode.membersMutex.RUnlock()
 
-	fmt.Println("Entering loop chainPutMetadata")
 	for i := 0; i < altNode.Config.N; i++ {
 		select {
 		case success := <-successCh:
@@ -368,7 +379,6 @@ func (altNode *Node) chainPutMetadata(wg *sync.WaitGroup, putMDArgs *PutMDArgs,
 			*failPeerIDs = append(*failPeerIDs, fail)
 		}
 	}
-	fmt.Println("Exiting loop chainPutMetadata")
 
 	wg.Done()
 	return
@@ -382,9 +392,10 @@ func (altNode *Node) PutData(args *PutArgs, _ *struct{}) error {
 		err := b.Put(k[:], args.V)
 		return err
 	})
-	// if err == nil {
-	// 	log.Print("Stored pair " + args.Name + "," + string(args.V) + " key is " + k.String())
-	// }
+	if err == nil {
+		// log.Print("Stored pair " + args.Name + "," + string(args.V) + " key is " + k.String())
+		fmt.Println("Pair: " + k.String())
+	}
 	return err
 }
 
@@ -405,7 +416,8 @@ func (altNode *Node) PutMetadata(args *PutMDArgs, _ *struct{}) error {
 		return err
 	})
 	if err == nil {
-		log.Print("Stored metadata for " + args.Name + ", key is " + k.String())
+		// log.Print("Stored metadata for " + args.Name + ", key is " + k.String())
+		fmt.Println("Meta: " + k.String())
 	}
 	return err
 }
@@ -583,6 +595,24 @@ func (altNode *Node) chainGetMetadata(k Key) Metadata {
 	return Metadata{}
 }
 
+func (db *dB) batchPut(bucket []byte, keys *[]Key, vals *[][]byte) error {
+	anyError := false
+	err := db.Batch(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucket)
+		for i := range *keys {
+			err := b.Put((*keys)[i][:], (*vals)[i])
+			if err != nil {
+				anyError = true
+			}
+		}
+		if anyError {
+			return ErrBatchPutIncomplete
+		}
+		return nil
+	})
+	return err
+}
+
 // BatchPutArgs are the arguments for a batch put
 type BatchPutArgs struct {
 	Bucket []byte
@@ -628,5 +658,49 @@ func (altNode *Node) DropKeyData(k *Key, _ *struct{}) error {
 		err := b.Delete(k[:])
 		return err
 	})
+	return err
+}
+
+// DumpMetadata dumps all keys in the metadata store to stdout
+func (altNode *Node) DumpMetadata(_ struct{}, _ *struct{}) error {
+	i := 0
+	fmt.Println("***Metadata dump***")
+	err := altNode.DB.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(metaDataBucket)
+		c := b.Cursor()
+
+		// Start seeking at min
+		c.Seek(minSlice)
+		// Stop at max
+		for kslice, _ := c.First(); kslice != nil; kslice, _ = c.Next() {
+			fmt.Printf("Meta: %v\n", SliceToKey(kslice))
+			i++
+		}
+		return nil
+	})
+	fmt.Printf("TOTAL: %d\n", i)
+	fmt.Println("***End of metadata dump***")
+	return err
+}
+
+// DumpData dumps all keys in the metadata store to stdout
+func (altNode *Node) DumpData(_ struct{}, _ *struct{}) error {
+	fmt.Println("***Data dump***")
+	i := 0
+	err := altNode.DB.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(dataBucket)
+		c := b.Cursor()
+
+		// Start seeking at min
+		c.Seek(minSlice)
+		// Stop at max
+		for kslice, _ := c.First(); kslice != nil; kslice, _ = c.Next() {
+			fmt.Printf("Data: %v\n", SliceToKey(kslice))
+			i++
+		}
+		return nil
+	})
+	fmt.Printf("TOTAL: %d\n", i)
+	fmt.Println("***End of data dump***")
 	return err
 }

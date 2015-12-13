@@ -12,6 +12,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	// For profile
+	_ "net/http/pprof"
 	"net/rpc"
 	"os"
 	"os/signal"
@@ -86,6 +88,12 @@ func InitNode(conf Config, port string, address string) {
 	node.initDB()
 	node.rpcServ.Init()
 
+	if conf.CPUProfile {
+		go func() {
+			log.Println(http.ListenAndServe("localhost:6060", nil))
+		}()
+	}
+
 	if node.Config.FullKeys {
 		fullKeys = true
 	}
@@ -128,20 +136,17 @@ func InitNode(conf Config, port string, address string) {
 
 /* Ring join functions */
 
-// JoinRequestArgs is the set of return parameters to a JoinRequest
-type JoinRequestArgs struct {
+// JoinRequestRet is the set of return parameters to a JoinRequest
+type JoinRequestRet struct {
 	Keys []Key
 	Vals [][]byte
 }
 
 // JoinRequest handles a request by another node to join the ring
-func (altNode *Node) JoinRequest(other *Peer, ret *JoinRequestArgs) error {
+func (altNode *Node) JoinRequest(other *Peer, ret *JoinRequestRet) error {
 	// Find pairs in joiner's range
 	keys, vals := altNode.DB.getMDRange(altNode.ID, other.ID)
-	// fmt.Printf("giving pairs in range %s to %s\n", keyToString(altNode.ID), keyToString(other.ID))
-	for i := range keys {
-		fmt.Println(keys[i])
-	}
+	fmt.Printf("Giving pairs in range %v to %v\n", altNode.ID, other.ID)
 
 	// Add join to history
 	newEntry := histEntry{Time: time.Now(), Class: histJoin, Node: *other}
@@ -171,11 +176,13 @@ func (altNode *Node) joinRing(broker *Peer) error {
 	}
 
 	// Do join through future successor
-	var kvPairs JoinRequestArgs
+	var kvPairs JoinRequestRet
 	err = altNode.rpcServ.MakeRemoteCall(&successor, "JoinRequest", altNode.selfExt(), &kvPairs)
 	if err != nil {
 		return ErrJoinFail
 	}
+
+	altNode.DB.batchPut(metaDataBucket, &kvPairs.Keys, &kvPairs.Vals)
 
 	// Synchronize history with successor
 	altNode.syncMembers(&successor)

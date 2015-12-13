@@ -36,6 +36,7 @@ var altCmd = "alternator"
 var rpcServ alt.RPCService
 var peers []alt.Peer
 var entryMap map[string][]byte
+var mapLock sync.RWMutex
 
 func main() {
 	flag.BoolVar(&Config.diego, "diego", false, "assumes diego's linux environment, which has nice properties ;)")
@@ -88,6 +89,8 @@ func main() {
 				break
 			}
 			launchNodes(n)
+			time.Sleep(5000 * time.Millisecond)
+			getPeers()
 		case "insert":
 			if len(args) < 2 {
 				fmt.Println("Usage: insert [int]")
@@ -97,7 +100,23 @@ func main() {
 			if checkErr("Usage: insert [int]", err) {
 				break
 			}
+			getPeers()
 			putKeys(n)
+		case "insertseq":
+			if len(args) < 2 {
+				fmt.Println("Usage: insertseq [int]")
+				break
+			}
+			n, err := strconv.Atoi(args[1])
+			if checkErr("Usage: insert [int]", err) {
+				break
+			}
+			getPeers()
+			putKeysSeq(n)
+		case "dumpdata":
+			dumpData()
+		case "dumpmeta":
+			dumpMetadata()
 		case "test":
 			testKeys()
 		}
@@ -127,34 +146,71 @@ func testKeys() {
 	}
 }
 
+func putKeysSeq(n int) {
+	rand.Seed(time.Now().UTC().UnixNano())
+	for i := 0; i < n; i++ {
+		reps := randomIDs(peers)
+		name := randString(30)
+		v := []byte(randString(30))
+		args := alt.PutArgs{Name: name, V: v, Replicants: reps, Success: 0}
+		// // Wait a bit to avoid overflowing
+		err := rpcServ.MakeRemoteCall(&peers[rand.Intn(len(peers))], "Put", &args, &struct{}{})
+		if err != nil {
+			fmt.Printf("PUT for %v failed, %v\n", name, err)
+		} else {
+			// fmt.Println("Success!")
+			entryMap[name] = v
+		}
+		fmt.Printf("Done inserting %d keys\n", n)
+	}
+}
+
 func putKeys(n int) {
+	rand.Seed(time.Now().UTC().UnixNano())
 	var wg sync.WaitGroup
 	for i := 0; i < n; i++ {
 		reps := randomIDs(peers)
-		name := randString(10)
-		v := []byte(randString(20))
+		name := randString(30)
+		v := []byte(randString(30))
 		args := alt.PutArgs{Name: name, V: v, Replicants: reps, Success: 0}
-		call := rpcServ.MakeAsyncCall(&peers[0], "Put", &args, &struct{}{})
+		// // Wait a bit to avoid overflowing
+		call := rpcServ.MakeAsyncCall(&peers[rand.Intn(len(peers))], "Put", &args, &struct{}{})
 		wg.Add(1)
-		go func(call *rpc.Call, i int) {
+		go func(call *rpc.Call) {
+			defer wg.Done()
 			select {
 			case reply := <-call.Done:
 				if reply.Error != nil {
-					fmt.Println(reply.Error)
-					fmt.Printf("PUT for %v failed\n", reply.Args.(*alt.PutArgs).Name)
+					fmt.Printf("PUT for %v failed, %v\n", reply.Args.(*alt.PutArgs).Name, reply.Error)
 				} else {
-					fmt.Println("Success!")
+					// fmt.Println("Success!")
+					mapLock.Lock()
 					entryMap[name] = v
+					mapLock.Unlock()
 				}
-				wg.Done()
-			case <-time.After(10000 * time.Millisecond):
+			case <-time.After(5000 * time.Millisecond):
+				mapLock.Lock()
+				entryMap[name] = v
+				mapLock.Unlock()
 				fmt.Println("Timeout!")
-				wg.Done()
 			}
-		}(call, i)
+		}(call)
+		// time.Sleep(50 * time.Millisecond)
 	}
 	wg.Wait()
 	fmt.Printf("Done inserting %d keys\n", n)
+}
+
+func dumpData() {
+	for i := range peers {
+		rpcServ.MakeRemoteCall(&peers[i], "DumpData", struct{}{}, &struct{}{})
+	}
+}
+
+func dumpMetadata() {
+	for i := range peers {
+		rpcServ.MakeRemoteCall(&peers[i], "DumpMetadata", struct{}{}, &struct{}{})
+	}
 }
 
 func checkErr(str string, err error) bool {
@@ -193,7 +249,7 @@ func getPeers() {
 }
 
 func startNode(join string, port string) {
-	args := []string{"-e", altCmd}
+	args := []string{"--hold", "-e", altCmd}
 	if join != "0" {
 		args = append(args, "--join="+join)
 	}
@@ -201,7 +257,8 @@ func startNode(join string, port string) {
 		args = append(args, "--port="+port)
 	}
 	if port == Config.firstPort {
-		args = append(args, "--fullKeys")
+		// args = append(args, "--fullKeys")
+		args = append(args, "--cpuprofile")
 	}
 	exec.Command("konsole", args...).Run()
 }
@@ -223,7 +280,8 @@ func getIDs(peers []alt.Peer) []alt.Key {
 }
 
 func randomIDs(peers []alt.Peer) []alt.Key {
-	n := rand.Intn(len(peers)-1) + 1
+	// n := rand.Intn(2) + 1
+	n := 1
 
 	for i := len(peers) - 1; i > 0; i-- {
 		j := rand.Intn(i)
@@ -235,15 +293,4 @@ func randomIDs(peers []alt.Peer) []alt.Key {
 		keys = append(keys, peers[i].ID)
 	}
 	return keys
-}
-
-func randomCmds(cmds []*exec.Cmd) []*exec.Cmd {
-	// rand.Seed(time.Now().UTC().UnixNano())
-	n := rand.Intn(len(cmds)-1) + 1
-
-	for i := len(cmds) - 1; i > 0; i-- {
-		j := rand.Intn(i)
-		cmds[i], cmds[j] = cmds[j], cmds[i]
-	}
-	return cmds[0:n]
 }
