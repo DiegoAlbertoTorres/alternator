@@ -68,22 +68,17 @@ func (altNode *Node) initDB() {
 	altNode.DB = &dB{boltdb}
 	checkFatal("failed to open .db file", err)
 
-	checkBucketErr := func(err error) {
-		if (err != nil) && (err != bolt.ErrBucketExists) {
-			log.Fatal(err)
-		}
-	}
 	// Create a bucket for all entries
-	altNode.DB.Update(func(tx *bolt.Tx) error {
+	altNode.DB.Batch(func(tx *bolt.Tx) error {
 		// Create buckets
-		_, err = tx.CreateBucket(metaDataBucket)
-		checkBucketErr(err)
+		_, err = tx.CreateBucketIfNotExists(metaDataBucket)
+		checkErr("Bucket creation failed", err)
 		_, err := tx.CreateBucket(dataBucket)
-		checkBucketErr(err)
+		checkErr("Bucket creation failed", err)
 		_, err = tx.CreateBucket(pendingMDBucket)
-		checkBucketErr(err)
+		checkErr("Bucket creation failed", err)
 		_, err = tx.CreateBucket(pendingDataBucket)
-		checkBucketErr(err)
+		checkErr("Bucket creation failed", err)
 		return nil
 	})
 
@@ -174,12 +169,14 @@ func (altNode *Node) putPending(k Key, pending PendingPut) {
 }
 
 func (altNode *Node) resolvePending() {
-	altNode.DB.View(func(tx *bolt.Tx) error {
+	altNode.DB.Batch(func(tx *bolt.Tx) error {
 		pendMDBucket := tx.Bucket(pendingMDBucket)
 		c := pendMDBucket.Cursor()
 		for kslice, v := c.First(); kslice != nil; kslice, v = c.Next() {
 			k := SliceToKey(kslice)
 			PendingPut := bytesToPendingPut(v)
+			// Delete it while working on it
+			pendMDBucket.Delete(kslice)
 			go altNode.putPending(k, PendingPut)
 		}
 
@@ -188,6 +185,8 @@ func (altNode *Node) resolvePending() {
 		for kslice, v := c.First(); kslice != nil; kslice, v = c.Next() {
 			k := SliceToKey(kslice)
 			PendingPut := bytesToPendingPut(v)
+			// Delete it while working on it
+			pendDataBucket.Delete(kslice)
 			go altNode.putPending(k, PendingPut)
 		}
 		return nil
@@ -213,7 +212,6 @@ type PutArgs struct {
 // Put a (key, value) pair in the system
 func (altNode *Node) Put(putArgs *PutArgs, _ *struct{}) error {
 	k := StringToKey(putArgs.Name)
-	var successor Peer
 	var i int
 
 	// Attempt to pass the call to member of replication chain
@@ -231,7 +229,8 @@ func (altNode *Node) Put(putArgs *PutArgs, _ *struct{}) error {
 			break
 		}
 		// Else try to pass the Put down the chain
-		err := altNode.rpcServ.MakeRemoteCall(&successor, "Put", putArgs, &struct{}{})
+		fmt.Printf("Forwarding to %v\n", chainPeer.ID)
+		err := altNode.rpcServ.MakeRemoteCall(chainPeer, "Put", putArgs, &struct{}{})
 		if err == nil {
 			// Done, chain took responsibility
 			return nil
@@ -275,11 +274,14 @@ func (altNode *Node) Put(putArgs *PutArgs, _ *struct{}) error {
 	pendingDataPut := PendingPut{Type: pendingData, Peers: dataPendingIDs, Args: putArgs}
 
 	altNode.DB.Batch(func(tx *bolt.Tx) error {
-		pendMDBucket := tx.Bucket(pendingMDBucket)
-		pendDataBucket := tx.Bucket(pendingDataBucket)
-
-		pendMDBucket.Put(k[:], serialize(pendingMDPut))
-		pendDataBucket.Put(k[:], serialize(pendingDataPut))
+		if len(pendingMDPut.Peers) > 0 {
+			pendMDBucket := tx.Bucket(pendingMDBucket)
+			pendMDBucket.Put(k[:], serialize(pendingMDPut))
+		}
+		if len(pendingDataPut.Peers) > 0 {
+			pendDataBucket := tx.Bucket(pendingDataBucket)
+			pendDataBucket.Put(k[:], serialize(pendingDataPut))
+		}
 		return nil
 	})
 
@@ -308,10 +310,9 @@ func (altNode *Node) putDataInReps(wg *sync.WaitGroup, args *PutArgs, successPee
 			select {
 			case reply := <-call.Done:
 				if !checkErr("failed to put data in replicant", reply.Error) {
-					// successPeers = append(successPeers, rep)
 					successCh <- current
 				} else {
-					// failedPeerIDs = append(failedPeerIDs, rep.ID)
+					altNode.rpcServ.CloseIfBad(reply.Error, current)
 					fmt.Println("Error returned!")
 					failCh <- current.ID
 				}
@@ -360,6 +361,7 @@ func (altNode *Node) chainPutMetadata(wg *sync.WaitGroup, putMDArgs *PutMDArgs,
 				} else {
 					// failedPeerIDs = append(failedPeerIDs, currentPeer.ID)
 					failCh <- currentPeer.ID
+					altNode.rpcServ.CloseIfBad(reply.Error, current)
 				}
 				mdWg.Done()
 			case <-time.After(time.Duration(altNode.Config.PutMDTimeout) * time.Millisecond):
@@ -501,11 +503,12 @@ func (altNode *Node) rePutAllData() {
 			altNode.FindSuccessor(k, &successor)
 			rpArgs := RePutArgs{LeaverID: altNode.ID, K: k, V: v}
 			call := altNode.rpcServ.MakeAsyncCall(&successor, "RePut", rpArgs, &struct{}{})
-			go func(call *rpc.Call) {
+			go func(call *rpc.Call, peer *Peer) {
 				reply := <-call.Done
 				checkErr("Reput failed", reply.Error)
+				altNode.rpcServ.CloseIfBad(reply.Error, peer)
 				wg.Done()
-			}(call)
+			}(call, &successor)
 		}
 		wg.Wait()
 		return nil
@@ -582,12 +585,14 @@ func (altNode *Node) chainGetMetadata(k Key) Metadata {
 		if current == nil {
 			current = altNode.Members.List.Front()
 		}
-		call := altNode.rpcServ.MakeAsyncCall(getPeer(current), "GetMetadata", k, &rawMD)
+		currentPeer := getPeer(current)
+		call := altNode.rpcServ.MakeAsyncCall(currentPeer, "GetMetadata", k, &rawMD)
 		select {
 		case reply := <-call.Done:
 			if reply.Error == nil {
 				return bytesToMetadata(rawMD)
 			}
+			altNode.rpcServ.CloseIfBad(reply.Error, currentPeer)
 		case <-time.After(500 * time.Millisecond):
 		}
 		i++

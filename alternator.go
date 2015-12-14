@@ -18,7 +18,6 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
-	"strings"
 	"sync"
 	"time"
 )
@@ -76,7 +75,8 @@ func InitNode(conf Config, port string, address string) {
 	l, err := net.Listen("tcp", ":"+port)
 	checkErr("listen error ", err)
 	// Get port selected by server
-	port = strings.Split(l.Addr().String(), ":")[3]
+	// port = strings.Split(l.Addr().String(), ":")[3]
+	// port = "38650"
 
 	// Initialize Node fields
 	node.Address = "127.0.0.1:" + port
@@ -145,8 +145,8 @@ type JoinRequestRet struct {
 // JoinRequest handles a request by another node to join the ring
 func (altNode *Node) JoinRequest(other *Peer, ret *JoinRequestRet) error {
 	// Find pairs in joiner's range
-	keys, vals := altNode.DB.getMDRange(altNode.ID, other.ID)
-	fmt.Printf("Giving pairs in range %v to %v\n", altNode.ID, other.ID)
+	keys, vals := altNode.DB.getMDRange(altNode.getNthPredecessor(1).ID, other.ID)
+	fmt.Printf("Giving pairs in range %v to %v\n", altNode.getNthPredecessor(1).ID, other.ID)
 
 	// Add join to history
 	newEntry := histEntry{Time: time.Now(), Class: histJoin, Node: *other}
@@ -300,12 +300,11 @@ func (altNode *Node) checkPredecessor() {
 	case err := <-c:
 		// Something wrong
 		if (err != nil) || (beat != "OK") {
-			altNode.rpcServ.rpcClose(predecessor)
+			altNode.rpcServ.CloseIfBad(err, predecessor)
 		}
 	case <-time.After(time.Duration(altNode.Config.HeartbeatTimeout) * time.Millisecond):
 		// Call timed out
 		// fmt.Println("Predecessor stopped responding, ceasing connection")
-		altNode.rpcServ.rpcClose(predecessor)
 	}
 }
 
