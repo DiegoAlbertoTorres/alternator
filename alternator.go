@@ -300,12 +300,11 @@ func (altNode *Node) checkPredecessor() {
 	case err := <-c:
 		// Something wrong
 		if (err != nil) || (beat != "OK") {
-			altNode.rpcServ.rpcClose(predecessor)
+			altNode.rpcServ.CloseIfBad(err, predecessor)
 		}
 	case <-time.After(time.Duration(altNode.Config.HeartbeatTimeout) * time.Millisecond):
 		// Call timed out
 		// fmt.Println("Predecessor stopped responding, ceasing connection")
-		altNode.rpcServ.rpcClose(predecessor)
 	}
 }
 

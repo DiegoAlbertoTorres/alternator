@@ -34,6 +34,9 @@ var (
 
 	// ErrRePutFail occurs when reput fails
 	ErrRePutFail = errors.New("reput failed")
+
+	// ErrNiLCallee occurs when MakeRemoteCall or MakeAsyncCall are called with a nil peer
+	ErrNilPeer = errors.New("callee is nil")
 )
 
 func assertRemoteErr(err error, typ string) bool {

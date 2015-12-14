@@ -167,38 +167,44 @@ func putKeysSeq(n int) {
 
 func putKeys(n int) {
 	rand.Seed(time.Now().UTC().UnixNano())
+	success := 0
 	var wg sync.WaitGroup
 	for i := 0; i < n; i++ {
 		reps := randomIDs(peers)
 		name := randString(30)
 		v := []byte(randString(30))
 		args := alt.PutArgs{Name: name, V: v, Replicants: reps, Success: 0}
-		// // Wait a bit to avoid overflowing
-		call := rpcServ.MakeAsyncCall(&peers[rand.Intn(len(peers))], "Put", &args, &struct{}{})
+		// fmt.Printf("Execing %d\n", i)
+		peer := &peers[rand.Intn(len(peers))]
+		call := rpcServ.MakeAsyncCall(peer, "Put", &args, &struct{}{})
+		fmt.Printf("Putting on %v\n", peer.ID)
 		wg.Add(1)
-		go func(call *rpc.Call) {
+		go func(call *rpc.Call, start time.Time, peer *alt.Peer) {
 			defer wg.Done()
 			select {
 			case reply := <-call.Done:
-				if reply.Error != nil {
-					fmt.Printf("PUT for %v failed, %v\n", reply.Args.(*alt.PutArgs).Name, reply.Error)
-				} else {
-					// fmt.Println("Success!")
+				if reply.Error == nil {
+					// elapsed := time.Since(start)
+					// fmt.Printf("Took %s\n", elapsed)
 					mapLock.Lock()
 					entryMap[name] = v
+					success++
 					mapLock.Unlock()
+				} else {
+					rpcServ.CloseIfBad(reply.Error, peer)
+					fmt.Printf("PUT for %v failed, %v\n", reply.Args.(*alt.PutArgs).Name, reply.Error)
 				}
-			case <-time.After(5000 * time.Millisecond):
-				mapLock.Lock()
-				entryMap[name] = v
-				mapLock.Unlock()
-				fmt.Println("Timeout!")
+				// case <-time.After(5000 * time.Millisecond):
+				// 	mapLock.Lock()
+				// 	entryMap[name] = v
+				// 	mapLock.Unlock()
 			}
-		}(call)
+		}(call, time.Now(), peer)
 		// time.Sleep(50 * time.Millisecond)
 	}
 	wg.Wait()
 	fmt.Printf("Done inserting %d keys\n", n)
+	fmt.Printf("Success count is %d\n", success)
 }
 
 func dumpData() {
