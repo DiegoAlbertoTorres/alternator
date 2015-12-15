@@ -18,7 +18,6 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
-	"strings"
 	"sync"
 	"time"
 )
@@ -73,10 +72,11 @@ func InitNode(conf Config, port string, address string) {
 	node := new(Node)
 	rpc.Register(node)
 	rpc.HandleHTTP()
-	l, err := net.Listen("tcp", ":"+port)
+	l, err := net.Listen("tcp", address+":"+port)
 	checkErr("listen error ", err)
 	// Get port selected by server
-	port = strings.Split(l.Addr().String(), ":")[3]
+	// port = strings.Split(l.Addr().String(), ":")[3]
+	// port = "38650"
 
 	// Initialize Node fields
 	node.Address = "127.0.0.1:" + port
@@ -145,8 +145,8 @@ type JoinRequestRet struct {
 // JoinRequest handles a request by another node to join the ring
 func (altNode *Node) JoinRequest(other *Peer, ret *JoinRequestRet) error {
 	// Find pairs in joiner's range
-	keys, vals := altNode.DB.getMDRange(altNode.ID, other.ID)
-	fmt.Printf("Giving pairs in range %v to %v\n", altNode.ID, other.ID)
+	keys, vals := altNode.DB.getMDRange(altNode.getNthPredecessor(1).ID, other.ID)
+	fmt.Printf("Giving pairs in range %v to %v\n", altNode.getNthPredecessor(1).ID, other.ID)
 
 	// Add join to history
 	newEntry := histEntry{Time: time.Now(), Class: histJoin, Node: *other}
