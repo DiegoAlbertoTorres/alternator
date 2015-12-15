@@ -82,6 +82,7 @@ func (rpcServ *RPCService) MakeAsyncCall(callee *Peer, call string, args interfa
 }
 
 func (rpcServ *RPCService) rpcConnect(node *Peer) (*rpc.Client, error) {
+	fmt.Printf("Trying to connect to %v\n", node.Address)
 	client, err := rpc.DialHTTP("tcp", node.Address)
 	rpcServ.Lock()
 	rpcServ.clientMap[node.ID] = client

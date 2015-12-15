@@ -72,7 +72,7 @@ func InitNode(conf Config, port string, address string) {
 	node := new(Node)
 	rpc.Register(node)
 	rpc.HandleHTTP()
-	l, err := net.Listen("tcp", address+":"+port)
+	l, err := net.Listen("tcp", ":"+port)
 	checkErr("listen error ", err)
 	// Get port selected by server
 	// port = strings.Split(l.Addr().String(), ":")[3]
