@@ -12,12 +12,13 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"runtime"
+	"strings"
 	// For profile
 	_ "net/http/pprof"
 	"net/rpc"
 	"os"
 	"os/signal"
-	"runtime"
 	"sync"
 	"time"
 )
@@ -75,11 +76,12 @@ func InitNode(conf Config, port string, address string) {
 	l, err := net.Listen("tcp", ":"+port)
 	checkErr("listen error ", err)
 	// Get port selected by server
-	// port = strings.Split(l.Addr().String(), ":")[3]
-	// port = "38650"
+	addrstr := l.Addr().String()
+	colon := strings.LastIndex(addrstr, ":")
+	port = addrstr[colon+1:]
 
 	// Initialize Node fields
-	node.Address = "127.0.0.1:" + port
+	node.Address = getIP() + ":" + port
 	node.Port = port
 	node.ID = GenID(port)
 	node.RPCListener = l
@@ -119,6 +121,7 @@ func InitNode(conf Config, port string, address string) {
 	go node.sigHandler()
 
 	if node.Config.CPUProfile {
+		runtime.SetCPUProfileRate(10)
 		runtime.SetBlockProfileRate(1)
 		go func() {
 			fmt.Println("starting server")

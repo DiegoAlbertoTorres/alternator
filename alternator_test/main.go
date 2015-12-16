@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
-	"net/rpc"
 	"os"
 	"os/exec"
 	"strconv"
@@ -114,8 +113,10 @@ func main() {
 			getPeers()
 			putKeysSeq(n)
 		case "dumpdata":
+			getPeers()
 			dumpData()
 		case "dumpmeta":
+			getPeers()
 			dumpMetadata()
 		case "test":
 			testKeys()
@@ -176,31 +177,48 @@ func putKeys(n int) {
 		args := alt.PutArgs{Name: name, V: v, Replicants: reps, Success: 0}
 		// fmt.Printf("Execing %d\n", i)
 		peer := &peers[rand.Intn(len(peers))]
-		call := rpcServ.MakeAsyncCall(peer, "Put", &args, &struct{}{})
-		fmt.Printf("Putting on %v\n", peer.ID)
 		wg.Add(1)
-		go func(call *rpc.Call, start time.Time, peer *alt.Peer) {
+		go func(peer *alt.Peer) {
 			defer wg.Done()
-			select {
-			case reply := <-call.Done:
-				if reply.Error == nil {
-					// elapsed := time.Since(start)
-					// fmt.Printf("Took %s\n", elapsed)
-					mapLock.Lock()
-					entryMap[name] = v
-					success++
-					mapLock.Unlock()
-				} else {
-					rpcServ.CloseIfBad(reply.Error, peer)
-					fmt.Printf("PUT for %v failed, %v\n", reply.Args.(*alt.PutArgs).Name, reply.Error)
-				}
-				// case <-time.After(5000 * time.Millisecond):
-				// 	mapLock.Lock()
-				// 	entryMap[name] = v
-				// 	mapLock.Unlock()
+			start := time.Now()
+			err := rpcServ.MakeRemoteCall(peer, "Put", &args, &struct{}{})
+			if err == nil {
+				elapsed := time.Since(start)
+				fmt.Printf("Took %s\n", elapsed)
+				mapLock.Lock()
+				entryMap[name] = v
+				success++
+				mapLock.Unlock()
+			} else {
+				fmt.Printf("PUT for %v failed\n", args.Name)
+				rpcServ.CloseIfBad(err, peer)
 			}
-		}(call, time.Now(), peer)
-		// time.Sleep(50 * time.Millisecond)
+		}(peer)
+		// time.Sleep(100 * time.Millisecond)
+		// call := rpcServ.MakeAsyncCall(peer, "Put", &args, &struct{}{})
+		// fmt.Printf("Putting on %v\n", peer.ID)
+		// wg.Add(1)
+		// go func(call *rpc.Call, start time.Time, peer *alt.Peer) {
+		// 	defer wg.Done()
+		// 	select {
+		// 	case reply := <-call.Done:
+		// 		if reply.Error == nil {
+		// 			elapsed := time.Since(start)
+		// 			fmt.Printf("Took %s\n", elapsed)
+		// 			mapLock.Lock()
+		// 			entryMap[name] = v
+		// 			success++
+		// 			mapLock.Unlock()
+		// 		} else {
+		// 			rpcServ.CloseIfBad(reply.Error, peer)
+		// 			fmt.Printf("PUT for %v failed, %v\n", reply.Args.(*alt.PutArgs).Name, reply.Error)
+		// 		}
+		// 		// case <-time.After(5000 * time.Millisecond):
+		// 		// 	mapLock.Lock()
+		// 		// 	entryMap[name] = v
+		// 		// 	mapLock.Unlock()
+		// 	}
+		// }(call, time.Now(), peer)
 	}
 	wg.Wait()
 	fmt.Printf("Done inserting %d keys\n", n)
@@ -261,11 +279,17 @@ func startNode(join string, port string) {
 	}
 	if port != "0" {
 		args = append(args, "--port="+port)
+	} else {
+		args = append(args, "--port=0")
 	}
 	if port == Config.firstPort {
 		// args = append(args, "--fullKeys")
 		args = append(args, "--cpuprofile")
 	}
+	for _, str := range args {
+		fmt.Printf(str + " ")
+	}
+	fmt.Println()
 	exec.Command("konsole", args...).Run()
 }
 
