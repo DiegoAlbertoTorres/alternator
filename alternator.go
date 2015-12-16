@@ -12,13 +12,13 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"runtime"
+	"strings"
 	// For profile
 	_ "net/http/pprof"
 	"net/rpc"
 	"os"
 	"os/signal"
-	"runtime"
-	"strings"
 	"sync"
 	"time"
 )
@@ -76,10 +76,12 @@ func InitNode(conf Config, port string, address string) {
 	l, err := net.Listen("tcp", ":"+port)
 	checkErr("listen error ", err)
 	// Get port selected by server
-	port = strings.Split(l.Addr().String(), ":")[3]
+	addrstr := l.Addr().String()
+	colon := strings.LastIndex(addrstr, ":")
+	port = addrstr[colon+1:]
 
 	// Initialize Node fields
-	node.Address = "127.0.0.1:" + port
+	node.Address = getIP() + ":" + port
 	node.Port = port
 	node.ID = GenID(port)
 	node.RPCListener = l
@@ -119,6 +121,7 @@ func InitNode(conf Config, port string, address string) {
 	go node.sigHandler()
 
 	if node.Config.CPUProfile {
+		runtime.SetCPUProfileRate(10)
 		runtime.SetBlockProfileRate(1)
 		go func() {
 			fmt.Println("starting server")
@@ -145,8 +148,8 @@ type JoinRequestRet struct {
 // JoinRequest handles a request by another node to join the ring
 func (altNode *Node) JoinRequest(other *Peer, ret *JoinRequestRet) error {
 	// Find pairs in joiner's range
-	keys, vals := altNode.DB.getMDRange(altNode.ID, other.ID)
-	fmt.Printf("Giving pairs in range %v to %v\n", altNode.ID, other.ID)
+	keys, vals := altNode.DB.getMDRange(altNode.getNthPredecessor(1).ID, other.ID)
+	fmt.Printf("Giving pairs in range %v to %v\n", altNode.getNthPredecessor(1).ID, other.ID)
 
 	// Add join to history
 	newEntry := histEntry{Time: time.Now(), Class: histJoin, Node: *other}

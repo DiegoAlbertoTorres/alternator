@@ -35,7 +35,7 @@ func main() {
 	flag.IntVar(&config.ResolvePendingTime, "resolvePendingtime", 10000, "sets the amount of time (in ms) between attempts to resolve pending put operations.")
 	flag.IntVar(&config.HeartbeatTimeout, "heartbeatTimeout", 400, "sets the amount of time before a heartbeat times out.")
 	flag.IntVar(&config.PutMDTimeout, "putMDTimeout", 2000, "sets the amount of time before a PutMD times out.")
-	flag.IntVar(&config.PutDataTimeout, "putDataTimeout", 10000, "sets the amount of time before a PutData times out.")
+	flag.IntVar(&config.PutDataTimeout, "putDataTimeout", 2000, "sets the amount of time before a PutData times out.")
 	flag.IntVar(&config.N, "n", 3, "sets the amount of nodes that replicate metadata.")
 	flag.StringVar(&config.DotPath, "dotPath", os.Getenv("HOME")+"/.alternator/", "sets the directory for alternator's data.")
 	flag.BoolVar(&config.FullKeys, "fullKeys", false, "if true all keys (hashes) are printed completely.")
@@ -100,6 +100,10 @@ func main() {
 			for _, member := range members {
 				fmt.Println(member)
 			}
+		case "DumpData":
+			err = client.Call("Node."+command, struct{}{}, &struct{}{})
+		case "DumpMetadata":
+			err = client.Call("Node."+command, struct{}{}, &struct{}{})
 		}
 	} else {
 		// Create a new node

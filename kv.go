@@ -62,6 +62,12 @@ func (db *dB) close() {
 
 // Initialize a node's database in the filesystem, create buckets
 func (altNode *Node) initDB() {
+	checkBucketErr := func(err error) {
+		if (err != nil) && (err != bolt.ErrBucketExists) {
+			log.Fatal(err)
+		}
+	}
+
 	err := os.MkdirAll(altNode.Config.DotPath, 0777)
 	checkFatal("failed to make db path", err)
 	boltdb, err := bolt.Open(altNode.Config.DotPath+altNode.Port+".db", 0600, nil)
@@ -72,13 +78,13 @@ func (altNode *Node) initDB() {
 	altNode.DB.Batch(func(tx *bolt.Tx) error {
 		// Create buckets
 		_, err = tx.CreateBucketIfNotExists(metaDataBucket)
-		checkErr("Bucket creation failed", err)
+		checkBucketErr(err)
 		_, err := tx.CreateBucket(dataBucket)
-		checkErr("Bucket creation failed", err)
+		checkBucketErr(err)
 		_, err = tx.CreateBucket(pendingMDBucket)
-		checkErr("Bucket creation failed", err)
+		checkBucketErr(err)
 		_, err = tx.CreateBucket(pendingDataBucket)
-		checkErr("Bucket creation failed", err)
+		checkBucketErr(err)
 		return nil
 	})
 
@@ -270,20 +276,22 @@ func (altNode *Node) Put(putArgs *PutArgs, _ *struct{}) error {
 	// 	return ErrPutFail
 	// }
 
-	pendingMDPut := PendingPut{Type: pendingMD, Peers: mdPendingIDs, Args: putMDArgs}
-	pendingDataPut := PendingPut{Type: pendingData, Peers: dataPendingIDs, Args: putArgs}
+	go func() {
+		pendingMDPut := PendingPut{Type: pendingMD, Peers: mdPendingIDs, Args: putMDArgs}
+		pendingDataPut := PendingPut{Type: pendingData, Peers: dataPendingIDs, Args: putArgs}
 
-	altNode.DB.Batch(func(tx *bolt.Tx) error {
-		if len(pendingMDPut.Peers) > 0 {
-			pendMDBucket := tx.Bucket(pendingMDBucket)
-			pendMDBucket.Put(k[:], serialize(pendingMDPut))
-		}
-		if len(pendingDataPut.Peers) > 0 {
-			pendDataBucket := tx.Bucket(pendingDataBucket)
-			pendDataBucket.Put(k[:], serialize(pendingDataPut))
-		}
-		return nil
-	})
+		altNode.DB.Batch(func(tx *bolt.Tx) error {
+			if len(pendingMDPut.Peers) > 0 {
+				pendMDBucket := tx.Bucket(pendingMDBucket)
+				pendMDBucket.Put(k[:], serialize(pendingMDPut))
+			}
+			if len(pendingDataPut.Peers) > 0 {
+				pendDataBucket := tx.Bucket(pendingDataBucket)
+				pendDataBucket.Put(k[:], serialize(pendingDataPut))
+			}
+			return nil
+		})
+	}()
 
 	return nil
 }
@@ -343,7 +351,6 @@ func (altNode *Node) chainPutMetadata(wg *sync.WaitGroup, putMDArgs *PutMDArgs,
 	failCh := make(chan Key, altNode.Config.N)
 
 	i := 0
-	var mdWg sync.WaitGroup
 	altNode.membersMutex.RLock()
 	for current := altNode.Members.FindSuccessor(k); i < altNode.Config.N; current = current.Next() {
 		if current == nil {
@@ -351,7 +358,6 @@ func (altNode *Node) chainPutMetadata(wg *sync.WaitGroup, putMDArgs *PutMDArgs,
 		}
 		currentPeer := getPeer(current)
 		call := altNode.rpcServ.MakeAsyncCall(currentPeer, "PutMetadata", &putMDArgs, &struct{}{})
-		mdWg.Add(1)
 		go func(call *rpc.Call, current *Peer) {
 			select {
 			case reply := <-call.Done:
@@ -363,10 +369,8 @@ func (altNode *Node) chainPutMetadata(wg *sync.WaitGroup, putMDArgs *PutMDArgs,
 					failCh <- currentPeer.ID
 					altNode.rpcServ.CloseIfBad(reply.Error, current)
 				}
-				mdWg.Done()
 			case <-time.After(time.Duration(altNode.Config.PutMDTimeout) * time.Millisecond):
 				failCh <- currentPeer.ID
-				mdWg.Done()
 			}
 		}(call, currentPeer)
 		i++
@@ -444,7 +448,10 @@ func (altNode *Node) RePut(args *RePutArgs, _ *struct{}) error {
 		}
 	}
 	// Get metadata from chain
-	md := altNode.chainGetMetadata(args.K)
+	md, err := altNode.chainGetMetadata(args.K)
+	if checkErr("RePut failed", err) {
+		return err
+	}
 
 	// Find leaver
 	var i int
@@ -467,7 +474,7 @@ func (altNode *Node) RePut(args *RePutArgs, _ *struct{}) error {
 	}
 	// Do the put again
 	putArgs := PutArgs{Name: md.Name, V: args.V, Replicants: md.Replicants, Success: 0}
-	err := altNode.rpcServ.MakeRemoteCall(successor, "Put", putArgs, &struct{}{})
+	err = altNode.rpcServ.MakeRemoteCall(successor, "Put", putArgs, &struct{}{})
 	checkErr("Put failed", err)
 
 	return err
@@ -551,7 +558,10 @@ func (altNode *Node) Get(name string, ret *[]byte) error {
 	k := StringToKey(name)
 
 	// Get replicants from metadata chain
-	md := altNode.chainGetMetadata(k)
+	md, err := altNode.chainGetMetadata(k)
+	if checkErr("Get failed", err) {
+		return err
+	}
 
 	// Get data from some replicant
 	for _, repID := range md.Replicants {
@@ -576,7 +586,7 @@ func (altNode *Node) Get(name string, ret *[]byte) error {
 
 // TODO: write chainGetData
 
-func (altNode *Node) chainGetMetadata(k Key) Metadata {
+func (altNode *Node) chainGetMetadata(k Key) (Metadata, error) {
 	// altNode.FindSuccessor(k, &successor)
 	i := 0
 	current := altNode.Members.FindSuccessor(k)
@@ -590,14 +600,14 @@ func (altNode *Node) chainGetMetadata(k Key) Metadata {
 		select {
 		case reply := <-call.Done:
 			if reply.Error == nil {
-				return bytesToMetadata(rawMD)
+				return bytesToMetadata(rawMD), nil
 			}
 			altNode.rpcServ.CloseIfBad(reply.Error, currentPeer)
 		case <-time.After(500 * time.Millisecond):
 		}
 		i++
 	}
-	return Metadata{}
+	return Metadata{}, ErrKeyNotFound
 }
 
 func (db *dB) batchPut(bucket []byte, keys *[]Key, vals *[][]byte) error {

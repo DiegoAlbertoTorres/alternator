@@ -6,6 +6,7 @@ import (
 	"encoding/gob"
 	"io"
 	"math/rand"
+	"net"
 	"os"
 	"strconv"
 )
@@ -48,4 +49,21 @@ func serialize(obj interface{}) []byte {
 	err := enc.Encode(obj)
 	checkErr("serialization failed", err)
 	return buf.Bytes()
+}
+
+func getIP() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		os.Stderr.WriteString("Oops: " + err.Error() + "\n")
+		os.Exit(1)
+	}
+
+	for _, a := range addrs {
+		if ipnet, ok := a.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+			if ipnet.IP.To4() != nil {
+				return ipnet.IP.String()
+			}
+		}
+	}
+	return ""
 }
