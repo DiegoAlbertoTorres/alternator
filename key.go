@@ -3,43 +3,45 @@ package alternator
 import (
 	"bytes"
 	"crypto/sha1"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"math"
-	"math/rand"
-	"strconv"
-	"time"
 	"unsafe"
 )
 
 const initSeed = 500
 
-var maxSlice, _ = hex.DecodeString("ffffffffffffffffffffffffffffffffffffffff")
-var minSlice, _ = hex.DecodeString("0000000000000000000000000000000000000000")
-
-// MaxKey is the highest possible key
-var MaxKey = SliceToKey(maxSlice)
-
-// MinKey is the lowest possible key
-var MinKey = SliceToKey(minSlice)
-
-// Key is a sha1 hash. A key is used as the primary of the consistent hashing scheme.
+// Key is a sha1 hash. A key is used as the primary identifier of entries in Alternator.
+// Additionally, node identifiers are also a key, and so nodes share the key-space with entries,
+// so that responsibility for key-value pairs is assigned to the successor of the key.
 type Key [sha1.Size]byte
 
-// Compare compares two keys, behaves just like bytes.Compare
+// MaxKey is the highest possible key in the key-space.
+var MaxKey = [sha1.Size]byte{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
+
+// MinKey is the lowest possible key in the key-space.
+var MinKey = [sha1.Size]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+
+func (k Key) String() string {
+	keyOut := k[:]
+	if !fullKeys {
+		keyOut = k[0:10]
+	}
+	return fmt.Sprintf(k.xColor()+"%x\x1b[0m", keyOut)
+}
+
+// Compare compares two keys. Behaves just like bytes.Compare.
 func (k Key) Compare(other Key) int {
 	return bytes.Compare(k[:], other[:])
 }
 
-// SliceToKey converts a slice to a key (an alias for an array)
+// SliceToKey converts a slice to a Key (which is an alias for a byte array).
 func SliceToKey(src []byte) (dst Key) {
-	// dst = (key)(&src[0])
 	dst = *(*[sha1.Size]byte)(unsafe.Pointer(&src[0]))
 	return
 }
 
-// inRange checks if test is in the key range [from, to]
+// inRange checks if test is in the key range [from, to].
 func inRange(test, from, to Key) bool {
 	if from.Compare(to) < 0 {
 		return (test.Compare(from) > 0) && (test.Compare(to) < 0)
@@ -47,7 +49,7 @@ func inRange(test, from, to Key) bool {
 		return ((test.Compare(from) > 0) && (test.Compare(MaxKey) <= 0)) ||
 			((test.Compare(to) < 0) && (test.Compare(MinKey) >= 0))
 	} else {
-		return (test.Compare(from) != 0)
+		return (test.Compare(from) == 0) || (test.Compare(to) == 0)
 	}
 }
 
@@ -56,23 +58,6 @@ func StringToKey(str string) Key {
 	h := sha1.New()
 	io.WriteString(h, str)
 	return SliceToKey(h.Sum(nil))
-}
-
-// RandomKey returns a random key
-func RandomKey() Key {
-	h := sha1.New()
-	rand.Seed(time.Now().UnixNano())
-	io.WriteString(h, strconv.Itoa(rand.Int()))
-	return SliceToKey(h.Sum(nil))
-}
-
-func (k Key) String() string {
-	keyOut := k[0:10]
-	if fullKeys {
-		keyOut = k[:]
-	}
-	// Only first ten characters for simplicity's sake
-	return fmt.Sprintf(k.xColor()+"%x\x1b[0m", keyOut)
 }
 
 // xColor creates terminal truecolor escape sequence for the given key

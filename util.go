@@ -8,7 +8,6 @@ import (
 	"math/rand"
 	"net"
 	"os"
-	"strconv"
 )
 
 func intMax(a, b int) int {
@@ -18,12 +17,11 @@ func intMax(a, b int) int {
 	return b
 }
 
-// GenID generates the ID of a node given its port
-func GenID(port string) Key {
-	hostname, _ := os.Hostname()
+// GenID generates the ID of a node given its address.
+func GenID(address string) Key {
 	h := sha1.New()
 	rand.Seed(initSeed)
-	io.WriteString(h, hostname+port+strconv.Itoa(rand.Int()))
+	io.WriteString(h, address)
 	return SliceToKey(h.Sum(nil))
 }
 

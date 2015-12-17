@@ -8,7 +8,10 @@ import (
 	"sync"
 )
 
-// RPCService provides bindings to make rpc calls to other nodes
+// RPCService provides an interface to make RPC calls to other nodes. Currently, RPCService only
+// uses HTTP as a network channel. To communicate with other nodes first the RPCService must be
+// initialized by a call to RPCService.Init(). Then, MakeRemoteCall and MakeAsyncCall can be used to
+// call functions exposed by other nodes.
 type RPCService struct {
 	sync.RWMutex
 	clientMap map[string]*rpc.Client
@@ -21,8 +24,10 @@ func (rpcServ *RPCService) Init() {
 	rpcServ.Unlock()
 }
 
-// MakeRemoteCall calls a function at a remote peer synchronously
-func (rpcServ *RPCService) MakeRemoteCall(callee *Peer, call string, args interface{}, result interface{}) error {
+// MakeRemoteCall calls a function at a remote peer 'callee' synchronously. The usage of the three
+// last arguments is identical to that of net/rpc's '(client *Client) Call' function.
+func (rpcServ *RPCService) MakeRemoteCall(callee *Peer, call string, args interface{},
+	result interface{}) error {
 	if callee == nil {
 		return nil
 	}
@@ -53,7 +58,8 @@ func (rpcServ *RPCService) MakeRemoteCall(callee *Peer, call string, args interf
 	return err
 }
 
-// MakeAsyncCall calls a function at a remote peer asynchronously
+// MakeAsyncCall calls a function at a remote peer 'callee' asynchronously. The three last arguments
+// are identical to that of net/rpc's '(client *Client) Go' function.
 func (rpcServ *RPCService) MakeAsyncCall(callee *Peer, call string, args interface{}, result interface{}) *rpc.Call {
 	if callee == nil {
 		return nil
@@ -79,31 +85,34 @@ func (rpcServ *RPCService) MakeAsyncCall(callee *Peer, call string, args interfa
 	return asyncCall
 }
 
-func (rpcServ *RPCService) rpcConnect(node *Peer) (*rpc.Client, error) {
-	client, err := rpc.DialHTTP("tcp", node.Address)
+func (rpcServ *RPCService) rpcConnect(peer *Peer) (*rpc.Client, error) {
+	// A client need not be dialed by HTTP. To implement other protocols all that
+	// is needed is to identify the protocol used by the Peer's address and
+	// create a client for the correct protocol.
+	client, err := rpc.DialHTTP("tcp", peer.Address)
 	rpcServ.Lock()
-	rpcServ.clientMap[node.Address] = client
+	rpcServ.clientMap[peer.Address] = client
 	rpcServ.Unlock()
 	return client, err
 }
 
-// CloseIfBad closes a connection if err is a bad connection error
+// CloseIfBad closes a connection if err crresponds to a bad connection error.
 func (rpcServ *RPCService) CloseIfBad(err error, node *Peer) {
 	if err == rpc.ErrShutdown || reflect.TypeOf(err) == reflect.TypeOf((*rpc.ServerError)(nil)).Elem() {
 		rpcServ.rpcClose(node)
 	}
 }
 
-// RPCClose closes and RPC connection
-func (rpcServ *RPCService) rpcClose(node *Peer) {
-	if node == nil {
+// RPCClose closes the connection with a peer.
+func (rpcServ *RPCService) rpcClose(peer *Peer) {
+	if peer == nil {
 		return
 	}
 	rpcServ.Lock()
-	client, exists := rpcServ.clientMap[node.Address]
+	client, exists := rpcServ.clientMap[peer.Address]
 	if exists {
 		client.Close()
-		delete(rpcServ.clientMap, node.Address)
+		delete(rpcServ.clientMap, peer.Address)
 	}
 	rpcServ.Unlock()
 }

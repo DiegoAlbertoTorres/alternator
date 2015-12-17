@@ -40,7 +40,7 @@ var mapLock sync.RWMutex
 func main() {
 	flag.BoolVar(&Config.diego, "diego", false, "assumes diego's linux environment, which has nice properties ;)")
 	flag.IntVar(&Config.nNodes, "n", 8, "number of entries to be inserted")
-	flag.StringVar(&Config.firstPort, "first", "38650", "number of the port of the first port")
+	flag.StringVar(&Config.firstPort, "first", "46626", "number of the port of the first port")
 	flag.Parse()
 
 	if Config.nNodes < 1 {
@@ -154,7 +154,7 @@ func putKeysSeq(n int) {
 		reps := randomIDs(peers)
 		name := randString(30)
 		v := []byte(randString(30))
-		args := alt.PutArgs{Name: name, V: v, Replicants: reps, Success: 0}
+		args := alt.PutArgs{Name: name, V: v, Replicators: reps, Success: 0}
 		// // Wait a bit to avoid overflowing
 		err := rpcServ.MakeRemoteCall(&peers[rand.Intn(len(peers))], "Put", &args, &struct{}{})
 		if err != nil {
@@ -175,7 +175,7 @@ func putKeys(n int) {
 		reps := randomIDs(peers)
 		name := randString(30)
 		v := []byte(randString(30))
-		args := alt.PutArgs{Name: name, V: v, Replicants: reps, Success: 0}
+		args := alt.PutArgs{Name: name, V: v, Replicators: reps, Success: 0}
 		// fmt.Printf("Execing %d\n", i)
 		peer := &peers[rand.Intn(len(peers))]
 		wg.Add(1)
@@ -260,8 +260,8 @@ func startNode(join string, port string) {
 		args = append(args, "--port=0")
 	}
 	if port == Config.firstPort {
-		// args = append(args, "--fullKeys")
-		args = append(args, "--cpuprofile")
+		args = append(args, "--fullKeys")
+		// args = append(args, "--cpuprofile")
 	}
 	// for _, str := range args {
 	// 	fmt.Printf(str + " ")

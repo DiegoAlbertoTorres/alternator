@@ -12,15 +12,24 @@ import (
 	"github.com/boltdb/bolt"
 )
 
+// dataBucket stores all of this node's data.
 var dataBucket = []byte("data")
+
+// metaDataBucket stores all of this node's metadata.
 var metaDataBucket = []byte("metadata")
+
+// pendingDataBucket stores all pending PutData operations.
 var pendingDataBucket = []byte("pendingdata")
+
+// pendingMDBucket sotres all pending PutMetadata operations.
 var pendingMDBucket = []byte("pendingmetadata")
 
-// Metadata represents the metadata of a (key, value) pair
+// Metadata stores the metadata of a (key, value) pair.
 type Metadata struct {
-	Name       string
-	Replicants []Key
+	// Name of the entry, as used by the user. The key is the hash of the name.
+	Name string
+	// The list of replicators storing the value of the (key, value) pair.
+	Replicators []Key
 }
 
 /* Database struct and methods */
@@ -99,8 +108,7 @@ const (
 	pendingData
 )
 
-// PendingPut is used to store in database information on some entry that is still pending in the
-// kv store
+// PendingPut stores information on some database operation that is still pending in the system.
 type PendingPut struct {
 	Type  int
 	Peers []Key
@@ -114,9 +122,9 @@ func (altNode *Node) putPending(k Key, pending PendingPut) {
 	// TODO: make remote calls here async
 	for i, ownerID := range pending.Peers {
 
-		altNode.membersMutex.RLock()
+		altNode.Members.RLock()
 		owner := getPeer(altNode.Members.Map[ownerID])
-		altNode.membersMutex.RUnlock()
+		altNode.Members.RUnlock()
 
 		if owner == nil {
 			// Remove from Peers, node no longer in members list
@@ -208,10 +216,10 @@ func (altNode *Node) autoResolvePending() {
 
 // PutArgs is a struct to represent the arguments of Put or DBPut
 type PutArgs struct {
-	Name       string
-	V          []byte
-	Replicants []Key
-	Success    int
+	Name        string
+	V           []byte
+	Replicators []Key
+	Success     int
 }
 
 // Put a (key, value) pair in the system
@@ -245,7 +253,7 @@ func (altNode *Node) Put(putArgs *PutArgs, _ *struct{}) error {
 
 	var wg sync.WaitGroup
 	putMDArgs := PutMDArgs{Name: putArgs.Name,
-		MD: Metadata{Name: putArgs.Name, Replicants: putArgs.Replicants}}
+		MD: Metadata{Name: putArgs.Name, Replicators: putArgs.Replicators}}
 	mdPeers := make([]*Peer, 0, altNode.Config.N)
 	mdPendingIDs := make([]Key, 0, altNode.Config.N)
 
@@ -265,10 +273,10 @@ func (altNode *Node) Put(putArgs *PutArgs, _ *struct{}) error {
 	// }
 
 	// Undo if put does not meet success criteria
-	// if ((putArgs.Success == 0) && (len(dataPeers) != len(putArgs.Replicants))) ||
+	// if ((putArgs.Success == 0) && (len(dataPeers) != len(putArgs.Replicators))) ||
 	// 	(len(dataPeers) < putArgs.Success) {
 	//
-	// 	fmt.Printf("Success is %v, len(dataPeers) is %v, len(reps) is %v, len(fails) is %v\n", putArgs.Success, len(dataPeers), len(putArgs.Replicants), len(dataPendingIDs))
+	// 	fmt.Printf("Success is %v, len(dataPeers) is %v, len(reps) is %v, len(fails) is %v\n", putArgs.Success, len(dataPeers), len(putArgs.Replicators), len(dataPendingIDs))
 	//
 	// 	altNode.undoPutMD(k, mdPeers)
 	// 	altNode.undoPutData(k, dataPeers)
@@ -298,13 +306,13 @@ func (altNode *Node) Put(putArgs *PutArgs, _ *struct{}) error {
 func (altNode *Node) putDataInReps(wg *sync.WaitGroup, args *PutArgs, successPeers *[]*Peer,
 	failPeerIDs *[]Key) {
 
-	successCh := make(chan *Peer, len(args.Replicants))
+	successCh := make(chan *Peer, len(args.Replicators))
 	failCh := make(chan Key, altNode.Config.N)
 
-	for _, repID := range args.Replicants {
-		altNode.membersMutex.RLock()
+	for _, repID := range args.Replicators {
+		altNode.Members.RLock()
 		currentLNode, ok := altNode.Members.Map[repID]
-		altNode.membersMutex.RUnlock()
+		altNode.Members.RUnlock()
 		current := getPeer(currentLNode)
 
 		if !ok {
@@ -331,7 +339,7 @@ func (altNode *Node) putDataInReps(wg *sync.WaitGroup, args *PutArgs, successPee
 		}(current)
 	}
 
-	for i := 0; i < len(args.Replicants); i++ {
+	for i := 0; i < len(args.Replicators); i++ {
 		select {
 		case success := <-successCh:
 			*successPeers = append(*successPeers, success)
@@ -351,8 +359,8 @@ func (altNode *Node) chainPutMetadata(wg *sync.WaitGroup, putMDArgs *PutMDArgs,
 	failCh := make(chan Key, altNode.Config.N)
 
 	i := 0
-	altNode.membersMutex.RLock()
-	for current := altNode.Members.FindSuccessor(k); i < altNode.Config.N; current = current.Next() {
+	altNode.Members.RLock()
+	for current := altNode.Members.findSuccessor(k); i < altNode.Config.N; current = current.Next() {
 		if current == nil {
 			current = altNode.Members.List.Front()
 		}
@@ -374,7 +382,7 @@ func (altNode *Node) chainPutMetadata(wg *sync.WaitGroup, putMDArgs *PutMDArgs,
 		}(currentPeer)
 		i++
 	}
-	altNode.membersMutex.RUnlock()
+	altNode.Members.RUnlock()
 
 	for i := 0; i < altNode.Config.N; i++ {
 		select {
@@ -389,7 +397,7 @@ func (altNode *Node) chainPutMetadata(wg *sync.WaitGroup, putMDArgs *PutMDArgs,
 	return
 }
 
-// PutData puts the (hash(name), val) pair in DB
+// PutData puts the pair (hash(args.Name), args.V) in DB this node's database.
 func (altNode *Node) PutData(args *PutArgs, _ *struct{}) error {
 	k := StringToKey(args.Name)
 	err := altNode.DB.Batch(func(tx *bolt.Tx) error {
@@ -413,7 +421,7 @@ type PutMDArgs struct {
 // PutMetadata puts the (key, val) pair in DB
 func (altNode *Node) PutMetadata(args *PutMDArgs, _ *struct{}) error {
 	k := StringToKey(args.Name)
-	// Serialize replicants
+	// Serialize replicators
 	md := serialize(args.MD)
 	err := altNode.DB.Batch(func(tx *bolt.Tx) error {
 		b := tx.Bucket(metaDataBucket)
@@ -434,9 +442,8 @@ type RePutArgs struct {
 	V        []byte
 }
 
-// RePut redoes a Put
+// RePut reinserts an entry in this node into the system.
 func (altNode *Node) RePut(args *RePutArgs, _ *struct{}) error {
-	// var successor Peer
 	successorLNode := altNode.getListSuccessor()
 	successor := getPeer(successorLNode)
 	if successor.ID == args.LeaverID {
@@ -454,25 +461,25 @@ func (altNode *Node) RePut(args *RePutArgs, _ *struct{}) error {
 
 	// Find leaver
 	var i int
-	for i = range md.Replicants {
-		if md.Replicants[i] == args.LeaverID {
+	for i = range md.Replicators {
+		if md.Replicators[i] == args.LeaverID {
 			var randomID Key
 			// Get some random, different ID
 			for {
-				altNode.membersMutex.RLock()
-				randomID = altNode.Members.GetRandom().ID
-				altNode.membersMutex.RUnlock()
-				if randomID != md.Replicants[i] {
+				altNode.Members.RLock()
+				randomID = altNode.Members.getRandom().ID
+				altNode.Members.RUnlock()
+				if randomID != md.Replicators[i] {
 					break
 				}
 			}
 			// Replace
-			md.Replicants[i] = randomID
+			md.Replicators[i] = randomID
 			break
 		}
 	}
 	// Do the put again
-	putArgs := PutArgs{Name: md.Name, V: args.V, Replicants: md.Replicants, Success: 0}
+	putArgs := PutArgs{Name: md.Name, V: args.V, Replicators: md.Replicators, Success: 0}
 	err = altNode.rpcServ.MakeRemoteCall(successor, "Put", putArgs, &struct{}{})
 	checkErr("Put failed", err)
 
@@ -523,7 +530,7 @@ func (altNode *Node) rePutAllData() {
 
 /* kv-store methods for GETTING from the database */
 
-// GetMetadata returns the metadata (serialized) of a specific variable
+// GetMetadata returns the metadata (serialized) associated with a key in this node's database.
 func (altNode *Node) GetMetadata(k Key, md *[]byte) error {
 	// fmt.Println("About to get metadata")
 	return altNode.DB.View(func(tx *bolt.Tx) error {
@@ -537,7 +544,7 @@ func (altNode *Node) GetMetadata(k Key, md *[]byte) error {
 	})
 }
 
-// GetData returns the metadata (serialized) of a specific variable
+// GetData returns the data associated with a key in this node's database.
 func (altNode *Node) GetData(k Key, data *[]byte) error {
 	// fmt.Println("About to get data")
 	return altNode.DB.View(func(tx *bolt.Tx) error {
@@ -551,34 +558,34 @@ func (altNode *Node) GetData(k Key, data *[]byte) error {
 	})
 }
 
-// Get gets from the system the value corresponding to the key
-func (altNode *Node) Get(name string, ret *[]byte) error {
+// Get sets 'value' to the value corresponding to the entry with name 'name'.
+func (altNode *Node) Get(name string, value *[]byte) error {
 	k := StringToKey(name)
 
-	// Get replicants from metadata chain
+	// Get replicators from metadata chain
 	md, err := altNode.chainGetMetadata(k)
 	if checkErr("Get failed", err) {
 		return err
 	}
 
 	// Get data from some replicant
-	for _, repID := range md.Replicants {
-		altNode.membersMutex.RLock()
+	for _, repID := range md.Replicators {
+		altNode.Members.RLock()
 		rep := getPeer(altNode.Members.Map[repID])
-		altNode.membersMutex.RUnlock()
+		altNode.Members.RUnlock()
 		// In case rep left
-		// TODO: this occurs because when replicants leave, nobody re-replicates their data
+		// TODO: this occurs because when replicators leave, nobody re-replicates their data
 		if rep == nil {
 			continue
 		}
 		var result []byte
 		err := altNode.rpcServ.MakeRemoteCall(rep, "GetData", k, &result)
 		if err == nil {
-			*ret = result
+			*value = result
 			return nil
 		}
 	}
-	// None of the replicants had the data?
+	// None of the replicators had the data?
 	return ErrDataLost
 }
 
@@ -587,7 +594,7 @@ func (altNode *Node) Get(name string, ret *[]byte) error {
 func (altNode *Node) chainGetMetadata(k Key) (Metadata, error) {
 	// altNode.FindSuccessor(k, &successor)
 	i := 0
-	current := altNode.Members.FindSuccessor(k)
+	current := altNode.Members.findSuccessor(k)
 	for ; i < altNode.Config.N; current = current.Next() {
 		var rawMD []byte
 		if current == nil {
@@ -628,12 +635,13 @@ func (db *dB) batchPut(bucket []byte, keys *[]Key, vals *[][]byte) error {
 
 // BatchPutArgs are the arguments for a batch put
 type BatchPutArgs struct {
+	// Put the (key, value) pairs in Bucket
 	Bucket []byte
 	Keys   []Key
 	Vals   [][]byte
 }
 
-// BatchPut puts a set of key-value pairs in the specified bucket
+// BatchPut puts a multiple of key-value pairs in the specified bucket.
 func (altNode *Node) BatchPut(args BatchPutArgs, _ *struct{}) error {
 	err := altNode.DB.Batch(func(tx *bolt.Tx) error {
 		b := tx.Bucket(args.Bucket)
@@ -654,7 +662,7 @@ func (altNode *Node) BatchPut(args BatchPutArgs, _ *struct{}) error {
 	return err
 }
 
-// DropKeyMD Drops all metadata associated with a key
+// DropKeyMD Drops all metadata associated with the key k.
 func (altNode *Node) DropKeyMD(k *Key, _ *struct{}) error {
 	err := altNode.DB.Batch(func(tx *bolt.Tx) error {
 		b := tx.Bucket(metaDataBucket)
@@ -664,7 +672,7 @@ func (altNode *Node) DropKeyMD(k *Key, _ *struct{}) error {
 	return err
 }
 
-// DropKeyData drops all data associated with a key
+// DropKeyData drops all data associated with the key k.
 func (altNode *Node) DropKeyData(k *Key, _ *struct{}) error {
 	err := altNode.DB.Batch(func(tx *bolt.Tx) error {
 		b := tx.Bucket(dataBucket)
@@ -674,7 +682,7 @@ func (altNode *Node) DropKeyData(k *Key, _ *struct{}) error {
 	return err
 }
 
-// DumpMetadata dumps all keys in the metadata store to stdout
+// DumpMetadata dumps all keys in the metadata store to stdout.
 func (altNode *Node) DumpMetadata(_ struct{}, _ *struct{}) error {
 	i := 0
 	fmt.Println("***Metadata dump***")
@@ -683,7 +691,7 @@ func (altNode *Node) DumpMetadata(_ struct{}, _ *struct{}) error {
 		c := b.Cursor()
 
 		// Start seeking at min
-		c.Seek(minSlice)
+		c.Seek(MinKey[:])
 		// Stop at max
 		for kslice, _ := c.First(); kslice != nil; kslice, _ = c.Next() {
 			fmt.Printf("Meta: %v\n", SliceToKey(kslice))
@@ -696,7 +704,7 @@ func (altNode *Node) DumpMetadata(_ struct{}, _ *struct{}) error {
 	return err
 }
 
-// DumpData dumps all keys in the metadata store to stdout
+// DumpData dumps all keys in the metadata store to stdout.
 func (altNode *Node) DumpData(_ struct{}, _ *struct{}) error {
 	fmt.Println("***Data dump***")
 	i := 0
@@ -705,7 +713,7 @@ func (altNode *Node) DumpData(_ struct{}, _ *struct{}) error {
 		c := b.Cursor()
 
 		// Start seeking at min
-		c.Seek(minSlice)
+		c.Seek(MinKey[:])
 		// Stop at max
 		for kslice, _ := c.First(); kslice != nil; kslice, _ = c.Next() {
 			fmt.Printf("Data: %v\n", SliceToKey(kslice))

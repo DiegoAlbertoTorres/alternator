@@ -6,12 +6,16 @@
 package main
 
 import (
+	"crypto/sha1"
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"io"
 	"log"
+	"math/rand"
 	"net/rpc"
 	"os"
+	"time"
 
 	"github.com/DiegoAlbertoTorres/alternator"
 )
@@ -48,7 +52,7 @@ func main() {
 		checkErr("dialing:", err)
 		switch command {
 		case "FindSuccessor":
-			key := alternator.RandomKey()
+			key := randomKey()
 			fmt.Println("Finding successor of ", key)
 			var reply alternator.Peer
 			err = client.Call("Node."+command, key, &reply)
@@ -74,7 +78,7 @@ func main() {
 			}
 
 			fmt.Println("Putting pair " + name + "," + args[1])
-			putArgs := alternator.PutArgs{Name: name, V: val, Replicants: dests, Success: 0}
+			putArgs := alternator.PutArgs{Name: name, V: val, Replicators: dests, Success: 0}
 			err = client.Call("Node."+command, &putArgs, &struct{}{})
 			checkErr("RPC failed", err)
 			fmt.Println("Success!")
@@ -108,9 +112,9 @@ func main() {
 	} else {
 		// Create a new node
 		if joinPort != "0" { // Join an existing ring
-			alternator.InitNode(config, port, addr+":"+joinPort)
+			alternator.CreateNode(config, port, addr+":"+joinPort)
 		} else {
-			alternator.InitNode(config, port, "") // Create a new ring
+			alternator.CreateNode(config, port, "") // Create a new ring
 		}
 	}
 	return
@@ -122,4 +126,21 @@ func checkErr(str string, err error) bool {
 		return true
 	}
 	return false
+}
+
+// randomKey produces a random key.
+func randomKey() alternator.Key {
+	h := sha1.New()
+	rand.Seed(time.Now().UnixNano())
+	io.WriteString(h, randString(100))
+	return alternator.SliceToKey(h.Sum(nil))
+}
+
+func randString(n int) string {
+	letterBytes := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = letterBytes[rand.Intn(len(letterBytes))]
+	}
+	return string(b)
 }

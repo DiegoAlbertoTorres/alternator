@@ -3,17 +3,19 @@ package alternator
 import (
 	"container/list"
 	"fmt"
+	"sync"
 )
 
 // Members stores the members of a node
 type Members struct {
+	sync.RWMutex
 	List *list.List
 	Map  map[Key]*list.Element
 }
 
 // Init initializes a Members struct. It must be called before any other call
 // to a Members method.
-func (members *Members) Init() {
+func (members *Members) init() {
 	members.List = list.New()
 	members.Map = make(map[Key]*list.Element)
 	// altNode.Members.Add(&selfExt)
@@ -27,8 +29,8 @@ func getPeer(e *list.Element) *Peer {
 	return nil
 }
 
-// FindSuccessor finds the successor of a key in the ring
-func (members *Members) FindSuccessor(key Key) *list.Element {
+// findSuccessor finds the successor of a key in the ring
+func (members *Members) findSuccessor(key Key) *list.Element {
 	// Find ID of successor
 	for e := members.List.Front(); e != nil; e = e.Next() {
 		if getPeer(e).ID.Compare(key) > 0 {
@@ -39,8 +41,8 @@ func (members *Members) FindSuccessor(key Key) *list.Element {
 	return members.List.Front()
 }
 
-// Insert adds a node to the members if not already there, returns true if added
-func (members *Members) Insert(peer *Peer) *list.Element {
+// insert adds a node to the members if not already there, returns true if added
+func (members *Members) insert(peer *Peer) *list.Element {
 	i := 0
 	// Iterate through members
 	for e := members.List.Front(); e != nil; e = e.Next() {
@@ -71,8 +73,8 @@ func (members *Members) Insert(peer *Peer) *list.Element {
 	return e
 }
 
-// Remove deletes a node from members
-func (members *Members) Remove(del *Peer) {
+// remove deletes a node from members
+func (members *Members) remove(del *Peer) {
 	for e := members.List.Front(); e != nil; e = e.Next() {
 		if getPeer(e).ID == del.ID {
 			members.List.Remove(e)
@@ -90,8 +92,8 @@ func (members Members) String() (str string) {
 	return
 }
 
-// GetRandom returns a random member from the ring
-func (members *Members) GetRandom() *Peer {
+// getRandom returns a random member from the ring
+func (members *Members) getRandom() *Peer {
 	// i := 0
 	// random := rand.Intn(len(members.Map))
 	// for _, member := range members.Map {
