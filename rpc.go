@@ -11,13 +11,13 @@ import (
 // RPCService provides bindings to make rpc calls to other nodes
 type RPCService struct {
 	sync.RWMutex
-	clientMap map[Key]*rpc.Client
+	clientMap map[string]*rpc.Client
 }
 
 // Init initializes an RPCService
 func (rpcServ *RPCService) Init() {
 	rpcServ.Lock()
-	rpcServ.clientMap = make(map[Key]*rpc.Client)
+	rpcServ.clientMap = make(map[string]*rpc.Client)
 	rpcServ.Unlock()
 }
 
@@ -26,13 +26,12 @@ func (rpcServ *RPCService) MakeRemoteCall(callee *Peer, call string, args interf
 	if callee == nil {
 		return nil
 	}
-	// fmt.Println("sync!")
 	// Check if there is already a connection
 	var client *rpc.Client
 	var err error
 
 	rpcServ.RLock()
-	client = rpcServ.clientMap[callee.ID]
+	client = rpcServ.clientMap[callee.Address]
 	rpcServ.RUnlock()
 
 	// Open if not
@@ -59,12 +58,11 @@ func (rpcServ *RPCService) MakeAsyncCall(callee *Peer, call string, args interfa
 	if callee == nil {
 		return nil
 	}
-	// fmt.Println("async!")
 	// Check if there is already a connection
 	var client *rpc.Client
 
 	rpcServ.RLock()
-	client = rpcServ.clientMap[callee.ID]
+	client = rpcServ.clientMap[callee.Address]
 	rpcServ.RUnlock()
 
 	// Open if not
@@ -84,7 +82,7 @@ func (rpcServ *RPCService) MakeAsyncCall(callee *Peer, call string, args interfa
 func (rpcServ *RPCService) rpcConnect(node *Peer) (*rpc.Client, error) {
 	client, err := rpc.DialHTTP("tcp", node.Address)
 	rpcServ.Lock()
-	rpcServ.clientMap[node.ID] = client
+	rpcServ.clientMap[node.Address] = client
 	rpcServ.Unlock()
 	return client, err
 }
@@ -102,10 +100,10 @@ func (rpcServ *RPCService) rpcClose(node *Peer) {
 		return
 	}
 	rpcServ.Lock()
-	client, exists := rpcServ.clientMap[node.ID]
+	client, exists := rpcServ.clientMap[node.Address]
 	if exists {
 		client.Close()
-		delete(rpcServ.clientMap, node.ID)
+		delete(rpcServ.clientMap, node.Address)
 	}
 	rpcServ.Unlock()
 }

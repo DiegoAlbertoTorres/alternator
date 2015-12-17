@@ -137,6 +137,12 @@ func InitNode(conf Config, port string, address string) {
 	return
 }
 
+func (altNode *Node) shutdown() {
+	altNode.DB.close()
+	fmt.Println("Goodbye!")
+	os.Exit(0)
+}
+
 /* Ring join functions */
 
 // JoinRequestRet is the set of return parameters to a JoinRequest
@@ -198,9 +204,9 @@ func (altNode *Node) joinRing(broker *Peer) error {
 
 // LeaveRequestArgs holds arguments for a leave request
 type LeaveRequestArgs struct {
-	Keys           []Key
-	Vals           [][]byte
-	DepartureEntry histEntry
+	Keys   []Key
+	Vals   [][]byte
+	Leaver Peer
 }
 
 // LeaveRequest handles a leave request. It appends the departure entry to the node's history.
@@ -208,10 +214,12 @@ func (altNode *Node) LeaveRequest(args *LeaveRequestArgs, _ *struct{}) error {
 	// Insert received keys
 	batchArgs := BatchPutArgs{metaDataBucket, args.Keys, args.Vals}
 	altNode.BatchPut(batchArgs, &struct{}{})
-	altNode.insertToHistory(args.DepartureEntry)
+
+	departureEntry := histEntry{Time: time.Now(), Class: histLeave, Node: args.Leaver}
+	altNode.insertToHistory(departureEntry)
 
 	altNode.membersMutex.Lock()
-	altNode.Members.Remove(&args.DepartureEntry.Node)
+	altNode.Members.Remove(&args.Leaver)
 	altNode.membersMutex.Unlock()
 
 	fmt.Println("Members changed:")
@@ -241,8 +249,7 @@ func (altNode *Node) leaveRing() error {
 
 	// Hand keys to successor
 	mdKeys, mdVals := altNode.DB.getMDRange(altNode.getPredecessor().ID, altNode.ID) // Gather entries
-	departureEntry := histEntry{Time: time.Now(), Class: histLeave, Node: altNode.selfExt()}
-	args := LeaveRequestArgs{mdKeys, mdVals, departureEntry}
+	args := LeaveRequestArgs{mdKeys, mdVals, altNode.selfExt()}
 
 	var err error
 	// Leave by notifying successor
@@ -250,8 +257,7 @@ func (altNode *Node) leaveRing() error {
 	if err != nil {
 		return ErrLeaveFail
 	}
-	altNode.DB.close()
-	os.Exit(0)
+	altNode.shutdown()
 	return nil
 }
 

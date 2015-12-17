@@ -5,7 +5,6 @@ import (
 	"encoding/gob"
 	"fmt"
 	"log"
-	"net/rpc"
 	"os"
 	"sync"
 	"time"
@@ -313,14 +312,15 @@ func (altNode *Node) putDataInReps(wg *sync.WaitGroup, args *PutArgs, successPee
 			continue
 		}
 
-		call := altNode.rpcServ.MakeAsyncCall(current, "PutData", args, &struct{}{})
-		go func(call *rpc.Call, current *Peer) {
+		go func(current *Peer) {
+			errChan := make(chan error, 1)
+			errChan <- altNode.rpcServ.MakeRemoteCall(current, "PutData", args, &struct{}{})
 			select {
-			case reply := <-call.Done:
-				if !checkErr("failed to put data in replicant", reply.Error) {
+			case err := <-errChan:
+				if !checkErr("failed to put data in replicant", err) {
 					successCh <- current
 				} else {
-					altNode.rpcServ.CloseIfBad(reply.Error, current)
+					altNode.rpcServ.CloseIfBad(err, current)
 					fmt.Println("Error returned!")
 					failCh <- current.ID
 				}
@@ -328,7 +328,7 @@ func (altNode *Node) putDataInReps(wg *sync.WaitGroup, args *PutArgs, successPee
 				fmt.Println("Timeout!")
 				failCh <- current.ID
 			}
-		}(call, current)
+		}(current)
 	}
 
 	for i := 0; i < len(args.Replicants); i++ {
@@ -357,22 +357,21 @@ func (altNode *Node) chainPutMetadata(wg *sync.WaitGroup, putMDArgs *PutMDArgs,
 			current = altNode.Members.List.Front()
 		}
 		currentPeer := getPeer(current)
-		call := altNode.rpcServ.MakeAsyncCall(currentPeer, "PutMetadata", &putMDArgs, &struct{}{})
-		go func(call *rpc.Call, current *Peer) {
+		go func(current *Peer) {
+			errChan := make(chan error, 1)
+			errChan <- altNode.rpcServ.MakeRemoteCall(currentPeer, "PutMetadata", &putMDArgs, &struct{}{})
 			select {
-			case reply := <-call.Done:
-				if !checkErr("metadata put fail", reply.Error) {
-					// successPeers = append(successPeers, currentPeer)
+			case err := <-errChan:
+				if !checkErr("metadata put fail", err) {
 					successCh <- currentPeer
 				} else {
-					// failedPeerIDs = append(failedPeerIDs, currentPeer.ID)
 					failCh <- currentPeer.ID
-					altNode.rpcServ.CloseIfBad(reply.Error, current)
+					altNode.rpcServ.CloseIfBad(err, current)
 				}
 			case <-time.After(time.Duration(altNode.Config.PutMDTimeout) * time.Millisecond):
 				failCh <- currentPeer.ID
 			}
-		}(call, currentPeer)
+		}(currentPeer)
 		i++
 	}
 	altNode.membersMutex.RUnlock()
@@ -509,13 +508,13 @@ func (altNode *Node) rePutAllData() {
 			k := SliceToKey(kslice)
 			altNode.FindSuccessor(k, &successor)
 			rpArgs := RePutArgs{LeaverID: altNode.ID, K: k, V: v}
-			call := altNode.rpcServ.MakeAsyncCall(&successor, "RePut", rpArgs, &struct{}{})
-			go func(call *rpc.Call, peer *Peer) {
-				reply := <-call.Done
-				checkErr("Reput failed", reply.Error)
-				altNode.rpcServ.CloseIfBad(reply.Error, peer)
+			wg.Add(1)
+			go func(peer *Peer) {
+				err := altNode.rpcServ.MakeRemoteCall(&successor, "RePut", rpArgs, &struct{}{})
+				checkErr("Reput failed", err)
+				altNode.rpcServ.CloseIfBad(err, peer)
 				wg.Done()
-			}(call, &successor)
+			}(&successor)
 		}
 		wg.Wait()
 		return nil
@@ -530,7 +529,7 @@ func (altNode *Node) GetMetadata(k Key, md *[]byte) error {
 	return altNode.DB.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket(metaDataBucket)
 		*md = b.Get(k[:])
-		// fmt.Println("Getting meta", k)
+		fmt.Println("Getting meta", k)
 		if md == nil {
 			return ErrKeyNotFound
 		}
@@ -544,11 +543,10 @@ func (altNode *Node) GetData(k Key, data *[]byte) error {
 	return altNode.DB.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket(dataBucket)
 		*data = b.Get(k[:])
-		// fmt.Println("Getting data", k)
+		fmt.Println("Getting data", k)
 		if data == nil {
 			return ErrKeyNotFound
 		}
-		// fmt.Printf("The answer is: %s\n", v)
 		return nil
 	})
 }

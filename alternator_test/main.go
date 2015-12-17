@@ -119,6 +119,7 @@ func main() {
 			getPeers()
 			dumpMetadata()
 		case "test":
+			getPeers()
 			testKeys()
 		}
 		fmt.Println("Please execute a command:")
@@ -195,30 +196,6 @@ func putKeys(n int) {
 			}
 		}(peer)
 		// time.Sleep(100 * time.Millisecond)
-		// call := rpcServ.MakeAsyncCall(peer, "Put", &args, &struct{}{})
-		// fmt.Printf("Putting on %v\n", peer.ID)
-		// wg.Add(1)
-		// go func(call *rpc.Call, start time.Time, peer *alt.Peer) {
-		// 	defer wg.Done()
-		// 	select {
-		// 	case reply := <-call.Done:
-		// 		if reply.Error == nil {
-		// 			elapsed := time.Since(start)
-		// 			fmt.Printf("Took %s\n", elapsed)
-		// 			mapLock.Lock()
-		// 			entryMap[name] = v
-		// 			success++
-		// 			mapLock.Unlock()
-		// 		} else {
-		// 			rpcServ.CloseIfBad(reply.Error, peer)
-		// 			fmt.Printf("PUT for %v failed, %v\n", reply.Args.(*alt.PutArgs).Name, reply.Error)
-		// 		}
-		// 		// case <-time.After(5000 * time.Millisecond):
-		// 		// 	mapLock.Lock()
-		// 		// 	entryMap[name] = v
-		// 		// 	mapLock.Unlock()
-		// 	}
-		// }(call, time.Now(), peer)
 	}
 	wg.Wait()
 	fmt.Printf("Done inserting %d keys\n", n)
@@ -310,17 +287,18 @@ func getIDs(peers []alt.Peer) []alt.Key {
 }
 
 func randomIDs(peers []alt.Peer) []alt.Key {
-	// n := rand.Intn(2) + 1
+	length := len(peers)
+	shuffled := make([]alt.Key, length)
+	for i := range peers {
+		shuffled[i] = peers[i].ID
+	}
+
+	// n := rand.Intn(length) + 1
 	n := 1
-
-	for i := len(peers) - 1; i > 0; i-- {
+	for i := length - 1; i > 0; i-- {
 		j := rand.Intn(i)
-		peers[i], peers[j] = peers[j], peers[i]
+		shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
 	}
 
-	var keys []alt.Key
-	for i := 0; i < n; i++ {
-		keys = append(keys, peers[i].ID)
-	}
-	return keys
+	return shuffled[0:n]
 }
